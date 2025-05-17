@@ -1,0 +1,17 @@
+name: choko-ppo
+
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - tensorboard
+  - pytorch
+  - pip:
+    - gym            # OpenAI Gym environments
+    - stable-baselines3[extra]  # PPO, A2C, DQN, etc.
