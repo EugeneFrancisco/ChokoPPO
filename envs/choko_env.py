@@ -10,8 +10,10 @@ class Choko_Env:
         self.obs_space = spaces.Box(low = 0, high = 2, shape = (BOARD_DIM, BOARD_DIM), dtype = np.int8)
         self.board = np.zeros((BOARD_DIM, BOARD_DIM), dtype = np.int8)
         self.player = 1
+        self.pieces_left = {1: NUM_PIECES_PER_PLAYER, 2: NUM_PIECES_PER_PLAYER}
         self.drop_initiative = 1
         self.action_space = spaces.Discrete(NUM_ACTIONS)
+        self.freeze_turns = False
     
     def reset(self):
         self.board = np.zeros((5, 5), dtype = np.int8)
@@ -20,39 +22,57 @@ class Choko_Env:
         return self.board
     
     def step(self, action):
-        # TODO change drop initiative
         assert self.action_space.contains(action), f"Invalid action {action}"
 
         # First 25 moves are for placing a piece
-        if action < 25:
-            row, col = divmod(action, 5)
+        info_map = self.to_info(action)
+        move_type = info_map["move_type"]
+        if move_type == "place":
+            if self.drop_initiative == 0:
+                # this is the first placement after a moving phase
+                self.drop_initiative = self.player
+
+            if self.board.sum() >= self.pieces_left[self.player]:
+                raise ValueError("Invalid move: No pieces left to place")
+            row, col = info_map["row"], info_map["col"]
             if self.board[row, col] == 0:
                 self.board[row, col] = self.player
+                self.pieces_left[self.player] -= 1
             else:
                 raise ValueError("Invalid move: Cell already occupied")
         
         # next 48 moves are for moving a piece
-        elif action < 125:
-            # TODO implement board sum
-            if self.drop_initiative != self.player:
+        elif move_type == "move":
+            
+            if self.drop_initiative != self.player and self.drop_initiative != 0:
+                # we are trying to move a piece but the drop initiative is set
+                # to the other player
                 raise ValueError("Invalid move: Not your drop initiative")
+            
+            self.drop_initiative = 0
             action -= 25
             index, direction = divmod(action, 4)
             row, col = divmod(index, 5)
+
+            row = info_map["row"]
+            col = info_map["col"]
+            direction = info_map["direction"]
             
-            next_row, next_col, _, _ = self.check_valid_move(row, col, direction)
+            next_row, next_col, _, _ = self.check_valid_move(row, col, direction, move_type)
             self.board[next_row, next_col] = self.player
             self.board[row, col] = 0
         
         else:
-            # TODO, implement board sum
-            action -= 125
-            jump_index, capture_index = divmod(action, 25)
-            capture_row, capture_col = divmod(capture_index, 5)
-            og_index, direction = divmod(jump_index, 4)
-            og_row, og_col = divmod(og_index, 5)
+            if self.drop_initiative != self.player and self.drop_initiative != 0:
+                # we are trying to move a piece but the drop initiative is set
+                # to the other player
+                raise ValueError("Invalid move: Not your drop initiative")
+            
+            self.drop_initiative = 0
+            capture_row, capture_col = info_map["capture_row"], info_map["capture_col"]
+            og_row, og_col, direction = info_map["row"], info_map["col"], info_map["direction"]
 
-            next_row, next_col, between_row, between_col = self.check_valid_move(og_row, og_col, direction, jump=True)
+            next_row, next_col, between_row, between_col = self.check_valid_move(og_row, og_col, direction, move_type)
 
             # perform the jump
             self.board[next_row, next_col] = self.player
@@ -67,27 +87,29 @@ class Choko_Env:
             
             self.board[capture_row, capture_col] = 0
         
-        # TODO delete this after debugging
-        # self.player = 3 - self.player
-        # TODO: return the flattened observations.
-            
+        if not self.freeze_turns:
+            self.player = 3 - self.player
+        
+        return 
+    
+    def fetch_obs_action_mask(self):
+        obs = self.board.flatten()
+        # BIG IDEA
+        '''
+        Begin with all actions impossible. For each piece on the board,
+        find out if the piece is my piece, and then use helper function
+        to find all the ways I can move this piece.
+
+        For captures, it will be helpful to have an array of all
+        opponents pieces. 
+        '''
+
+
     def board_sum(self):
         return self.board[self.board == self.player].sum()
     
-    @staticmethod
-    def to_action(row, col, move_type, direction=None, capture_row = None, capture_col = None):
-        if move_type == "place":
-            return row * 5 + col
-        if move_type == "move":
-            return 25 + (row*5 + col) * 4 + direction
-        if move_type == "jump":
-            if capture_row is None or capture_col is None:
-                raise ValueError("capture_row and capture_col must be provided for jump")
-            jump_index = (row*5 + col) * 4 + direction
-            capture_index = capture_row * 5 + capture_col
-            return 125 + jump_index * 25 + capture_index
 
-    def check_valid_move(self, row, col, direction, jump=False):
+    def check_valid_move(self, row, col, direction, move_type):
         if self.board[row, col] != self.player:
             raise ValueError("Invalid move: Not your piece")
         next_row = row
@@ -95,7 +117,7 @@ class Choko_Env:
         between_row = row
         between_col = col
         # 0, 1, 2, 3 = up, right, down, left
-        if jump:
+        if move_type == "jump":
             if direction == 0:
                 next_row = row - 2
                 between_row = row - 1
@@ -131,18 +153,64 @@ class Choko_Env:
 
         return next_row, next_col, between_row, between_col
 
+    @staticmethod
+    def to_info(action):
+        info_map = {
+            "row": None,
+            "col": None,
+            "move_type": None,
+            "direction": None,
+            "capture_row": None,
+            "capture_col": None
+        }
+        if action < 25:
+            info_map["move_type"] = "place"
+            info_map["row"], info_map["col"] = divmod(action, 5)
+        elif action < 125:
+            action -= 25
+            info_map["move_type"] = "move"
+            index, info_map["direction"] = divmod(action, 4)
+            info_map["row"], info_map["col"] = divmod(index, 5)
+        else:
+            action -= 125
+            info_map["move_type"] = "jump"
+            jump_index, capture_index = divmod(action, 25)
+            info_map["capture_row"], info_map["capture_col"] = divmod(capture_index, 5)
+            index, info_map["direction"] = divmod(jump_index, 4)
+            info_map["row"], info_map["col"] = divmod(index, 5)
+        return info_map
 
-def run_tests():
+    
+    @staticmethod
+    def to_action(row, col, move_type, direction=None, capture_row = None, capture_col = None):
+        if move_type == "place":
+            return row * 5 + col
+        if move_type == "move":
+            return 25 + (row*5 + col) * 4 + direction
+        if move_type == "jump":
+            if capture_row is None or capture_col is None:
+                raise ValueError("capture_row and capture_col must be provided for jump")
+            jump_index = (row*5 + col) * 4 + direction
+            capture_index = capture_row * 5 + capture_col
+            return 125 + jump_index * 25 + capture_index
+
+def move_tests():
+    '''
+    Tests the move function of the Choko_Env class.
+    '''
     env = Choko_Env()
+    env.freeze_turns = True # for debugging
 
     # testing that we can place a piece
     env.step(0)
     assert env.board[0, 0] == 1
 
+    env.player = 1
     env.step(21)
     row, col = divmod(21, 5)
     assert env.board[row, col] == 1
 
+    env.player = 1
     row = 3
     col = 2
     action = env.to_action(row=row, col=col, move_type="place")
@@ -154,7 +222,7 @@ def run_tests():
     col = 0
     direction = 2
     action = env.to_action(row=row, col=col, move_type="move", direction=direction)
-    next_row, next_col, _, _ = env.check_valid_move(row, col, direction)
+    next_row, next_col, _, _ = env.check_valid_move(row, col, direction, move_type="move")
 
     env.step(action)
     assert env.board[row, col] == 0
@@ -165,7 +233,7 @@ def run_tests():
     direction = 1
     action = env.to_action(row=row, col=col, move_type="move", direction=direction)
     assert env.board[row, col] == 1
-    next_row, next_col, _, _ = env.check_valid_move(row, col, direction)
+    next_row, next_col, _, _ = env.check_valid_move(row, col, direction, move_type="move")
     env.step(action)
     assert env.board[row, col] == 0
     assert env.board[next_row, next_col] == 1
@@ -196,7 +264,7 @@ def run_tests():
     )
 
     env.player = 1
-    next_row, next_col, between_row, between_col = env.check_valid_move(first_row, first_col, 1, jump=True)
+    next_row, next_col, between_row, between_col = env.check_valid_move(first_row, first_col, 1, move_type="jump")
     env.step(action)
 
     assert env.board[first_row, first_col] == 0
@@ -219,25 +287,32 @@ def run_tests():
     env.step(action)
     assert env.board[second_row, second_col] == 2
 
+    third_row = 0
+    third_col = 0
+    action = env.to_action(row=third_row, col=third_col, move_type="place")
+    env.step(action)
+    assert env.board[third_row, third_col] == 2
+
+    env.player = 1
     action = env.to_action(
         row=first_row,
         col=first_col,
         move_type="jump",
         direction=1,
-        capture_row=second_row,
-        capture_col=second_col
+        capture_row=third_row,
+        capture_col=third_col
     )
-
-    env.player = 1
-    next_row, next_col, between_row, between_col = env.check_valid_move(first_row, first_col, 1, jump=True)
+    next_row, next_col, between_row, between_col = env.check_valid_move(first_row, first_col, 1, move_type="jump")
     env.step(action)
 
     assert env.board[first_row, first_col] == 0
     assert env.board[next_row, next_col] == 1
     assert env.board[between_row, between_col] == 0
+    assert env.board[third_row, third_col] == 0
+    
 
 if __name__ == "__main__":
-    run_tests()
+    move_tests()
 
 
 
