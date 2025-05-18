@@ -1,3 +1,3 @@
-from .replay_buffer import Replay_Buffer
+from .replay_buffer import ReplayBuffer
 
-__all__ = ["Replay_Buffer"]
+__all__ = ["ReplayBuffer", "RLDataset"]
