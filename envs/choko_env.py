@@ -24,6 +24,10 @@ class Choko_Env:
         return self.fetch_obs_action_mask()
     
     def step(self, action):
+        '''
+        Given an action, performs the action on the board and returns a tuple of
+        (state, reward, done, info). Note that done is a string that can be "won", "draw", or "ongoing".
+        '''
         assert self.action_space.contains(action), f"Invalid action {action}"
 
         # First 25 moves are for placing a piece
@@ -114,7 +118,8 @@ class Choko_Env:
                 reward = 1
         else:
             reward = 0
-        done: bool = self.evaluate_termination(mask)
+        done: str = self.evaluate_termination(mask)
+        print(done)
         reward: int = 1 if done else 0 # reward is 1 if the player playing wins, 0 otherwise
         info = {}
 
@@ -140,8 +145,6 @@ class Choko_Env:
         return "ongoing"
     
     def fetch_obs_action_mask(self) -> tuple[np.ndarray, np.ndarray]:
-        obs = self.board.flatten()
-        # BIG IDEA
         '''
         Begin with all actions impossible. For each piece on the board,
         find out if the piece is my piece, and then use helper function
@@ -150,6 +153,7 @@ class Choko_Env:
         For captures, it will be helpful to have an array of all
         opponents pieces. 
         '''
+        obs = self.board.flatten()
         # get a list of the indices of all the opponent's pieces on the board
         opp_caps = self.get_opponent_pieces()
 
@@ -157,7 +161,6 @@ class Choko_Env:
         for row in range(BOARD_DIM):
             for col in range(BOARD_DIM):
                 self.get_valid_moves(row, col, opp_caps, mask)
-        
         return (obs, mask)
                 
     
