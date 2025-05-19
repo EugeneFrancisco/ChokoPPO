@@ -10,19 +10,18 @@ MAX_SIZE = 1000000
 NEG_INF = -1e10
 
 class RLDataset(Dataset):
-    def __init__(self, S, A, R, S_next, D):
-        self.S = torch.from_numpy(S)
-        self.A = torch.from_numpy(A)
-        self.R = torch.from_numpy(R)
-        self.S_next = torch.from_numpy(S_next)
-        self.D = torch.from_numpy(D)
+    def __init__(self, obs, actions, advantages, returns):
+        self.obs = torch.from_numpy(obs).float()
+        self.actions = torch.from_numpy(actions)
+        self.advantages = torch.from_numpy(advantages).float()
+        self.returns = torch.from_numpy(returns).float()
 
     
     def __len__(self):
-        return len(self.S)
+        return len(self.obs)
     
     def __getitem__(self, idx):
-        return (self.S[idx], self.A[idx], self.R[idx], self.S_next[idx], self.D[idx])
+        return (self.obs[idx], self.actions[idx], self.advantages[idx], self.returns[idx])
 
 class ReplayBuffer:
     # create a replay buffer that stores the MAX_SIZE transitions
@@ -36,9 +35,24 @@ class ReplayBuffer:
         self.critic = nn.Sequential(
             nn.Linear(25, 1)
         )
+    
+    def make_dataloader(self, batch_size = 64, shuffle = True, num_workers = 0) -> DataLoader:
+        '''
+        Returns a DataLoader for the dataset
+        '''
+        dataset_obs, actions, advantages, returns = self.make_dataset()
+        dataset = RLDataset(dataset_obs, actions, advantages, returns)
+        dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = shuffle, num_workers = num_workers)
+        return dataloader
 
-        pass
     def make_dataset(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        '''
+        Returns a tuple of (dataset_obs, actions, advantages, returns) where:
+            dataset_obs: [max_size, 25] a numpy array of observations
+            actions: [max_size] a numpy array of actions
+            advantages: [max_size] a numpy array of advantages
+            returns: [max_size] a numpy array of returns
+        '''
         # create an empty list of rollouts
         #
         # populate the list with rollouts, each element of the list is one rollout.
@@ -67,7 +81,6 @@ class ReplayBuffer:
             raw_obs, mask = self.env.reset()
             with torch.no_grad():
                 while True:
-                    # TODO make sure choko returns the observation with flipped 1s and 2s
                     # (1) add the observation
                     if self.env.player == 1:
                         obs = raw_obs
@@ -164,8 +177,13 @@ class ReplayBuffer:
 
 if __name__ == "__main__":
     env = Choko_Env()
-    buffer = ReplayBuffer(0.99, 0.95, max_size = 100)
-    dataset_obs, actions, advantages, returns = buffer.make_dataset()
-    print(returns)
+    buffer = ReplayBuffer(0.99, 0.95, max_size = 5000)
+    dataloader = buffer.make_dataloader(batch_size = 64, shuffle = True, num_workers = 0)
+    for batch in dataloader:
+        obs, actions, advantages, returns = batch
+        print(obs.shape)
+        print(actions.shape)
+        print(advantages.shape)
+        print(returns.shape)
 
 
