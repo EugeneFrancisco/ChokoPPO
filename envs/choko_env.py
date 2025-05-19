@@ -119,7 +119,6 @@ class Choko_Env:
         else:
             reward = 0
         done: str = self.evaluate_termination(mask)
-        print(done)
         reward: int = 1 if done else 0 # reward is 1 if the player playing wins, 0 otherwise
         info = {}
 

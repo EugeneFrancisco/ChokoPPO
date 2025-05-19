@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 from . import utils
 import numpy as np
 import torch
+import torch.nn as nn
 
 MAX_SIZE = 1000000
 NEG_INF = -1e10
@@ -32,7 +33,9 @@ class ReplayBuffer:
         self.max_size = max_size
         self.env = Choko_Env()
         self.agent = RandomAgent()
-        self.critic = lambda x: 10 # dummy critic TODO
+        self.critic = nn.Sequential(
+            nn.Linear(25, 1)
+        )
 
         pass
     def make_dataset(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -56,12 +59,10 @@ class ReplayBuffer:
             player_1_states = []
             player_1_actions = []
             player_1_rewards = []
-            player_1_values = []
             
             player_2_states = []
             player_2_actions = []
             player_2_rewards = []
-            player_2_values = []
 
             raw_obs, mask = self.env.reset()
             with torch.no_grad():
@@ -72,13 +73,10 @@ class ReplayBuffer:
                         obs = raw_obs
                         obs_torch = torch.from_numpy(raw_obs).float().unsqueeze(0)
                         player_1_states.append(obs)
-                        #TODO, leave value generation for the end so that you can do one batch pass over the states
-                        player_1_values.append(self.critic(obs_torch))
                     else:
-                        obs = 3 - raw_obs
-                        obs_torch = 3 - torch.from_numpy(raw_obs).float().unsqueeze(0)
+                        obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+                        obs_torch = 3 - torch.from_numpy(obs).float().unsqueeze(0)
                         player_2_states.append(obs)
-                        player_2_values.append(self.critic(obs_torch))
                     # (2) get the action and add the action
                     logits = self.agent.forward(obs_torch) # note obs here is just one observation TODO, maybe change to torch?
                     mask = torch.from_numpy(mask).float().unsqueeze(0)
@@ -114,9 +112,18 @@ class ReplayBuffer:
                                 # player 2 won, need to set the last reward for player 1 to -1
                                 player_1_rewards[-1] = -1
                         # add the last state to the trajectory
-                        player_1_values.append(0.0)
-                        player_2_values.append(0.0)
                         break
+                player_1_states_np = np.stack(player_1_states, axis = 0)
+                player_1_values_tensor = self.critic(torch.as_tensor(player_1_states_np).float())
+                player_1_values_tensor = player_1_values_tensor.squeeze(1)
+                player_1_values = player_1_values_tensor.tolist()
+                player_1_values.append(0) # add the last value to the trajectory
+                
+                player_2_states_np = np.stack(player_2_states, axis = 0)
+                player_2_values_tensor = self.critic(torch.as_tensor(player_2_states_np).float())
+                player_2_values_tensor = player_2_values_tensor.squeeze(1)
+                player_2_values = player_2_values_tensor.tolist()
+                player_2_values.append(0)
 
                 # now we have trajectories from each player's perspective. Need to add them to
                 # experiences
@@ -131,6 +138,7 @@ class ReplayBuffer:
                 actions.extend(player_1_actions)
                 advantages.extend(player_1_advantages)
                 returns.extend(player_1_returns)
+
 
                 player_2_returns, player_2_advantages = utils.compute_gae_and_returns(
                     player_2_rewards,
@@ -156,8 +164,8 @@ class ReplayBuffer:
 
 if __name__ == "__main__":
     env = Choko_Env()
-    buffer = ReplayBuffer(0.99, 0.95, 64)
+    buffer = ReplayBuffer(0.99, 0.95, max_size = 100)
     dataset_obs, actions, advantages, returns = buffer.make_dataset()
-    print(dataset_obs.shape)
+    print(returns)
 
 
