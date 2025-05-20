@@ -4,6 +4,7 @@ from envs.choko_env import Choko_Env
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+from torch.distributions import Categorical
 import numpy as np
 import tqdm
 import os
@@ -12,12 +13,15 @@ BATCH_SIZE = 128
 ROLLOUT_LENGTH = 4096
 HIDDEN_DIM = 64
 NUM_EPOCHS = 20
-NUM_UPDATES = 10
+NUM_ITERATIONS = 2000
 NUM_ACTIONS = (25) + (25 * 4) + (25 * 4 * 25) # 2625 possible actions
 C1 = 0.5
-C2 = 0.01 # TODO, add entropy bonus?
+C2 = 0.01 
 EPS_CLIP = 0.2
 NEG_INF = -1e10
+
+# TODO: add a config file
+# TODO: what should my epochs and updates be?
 
 
 def run_training_loop():
@@ -25,7 +29,7 @@ def run_training_loop():
     global_step = 0
 
     ppo_agent = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
-    for i in range(NUM_UPDATES):
+    for i in range(NUM_ITERATIONS):
         ppo_agent.eval()
         ppo_agent.switch_to_cpu()
         buffer = ReplayBuffer(gamma = 0.99, lam = 0.95, ppo_agent = ppo_agent, max_size = ROLLOUT_LENGTH)
@@ -36,8 +40,9 @@ def run_training_loop():
             )
         ppo_agent.switch_to_device()
         ppo_agent.train()
-        pbar = tqdm.tqdm(total = NUM_EPOCHS * len(dataloader), desc = "Training")
+        pbar = tqdm.tqdm(total = NUM_EPOCHS, desc = "Training")
         for _ in range(NUM_EPOCHS):
+            total_loss = 0.0
             for batch in dataloader:
                 obs, actions, masks, old_logps, advantages, returns = batch
                 
@@ -51,6 +56,7 @@ def run_training_loop():
                 # computing the actor loss
                 action_logits, values = ppo_agent(obs)
                 masked_logits = action_logits + (1 - masks) * NEG_INF
+                probs = torch.softmax(masked_logits, dim = -1)
                 all_log_probs = torch.log_softmax(masked_logits, dim = -1)
                 log_probs = all_log_probs[torch.arange(0, actions.shape[0]), actions]
                 
@@ -66,18 +72,18 @@ def run_training_loop():
                 values = values.squeeze(1)
                 critic_loss = torch.mean((returns - values)**2)
 
-                # TODO compute entropy loss
+                # compute entropy loss
+                dist = Categorical(probs)
+                entropy_loss = -torch.mean(dist.entropy())
             
                 # combining the losses
-                loss = actor_loss + C1 * critic_loss
+                loss = actor_loss + C1 * critic_loss + C2 * entropy_loss
                 ppo_agent.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(ppo_agent.parameters(), 0.5)
                 ppo_agent.optimizer.step()
 
                 # logging
-                pbar.set_postfix(loss=f"{loss.item():.4f}")
-                pbar.update(1)
                 writer.add_scalar("Loss/total", loss.item(), global_step)
                 writer.add_scalar("Loss/actor", actor_loss.item(), global_step)
                 writer.add_scalar("Loss/critic", critic_loss.item(), global_step)
@@ -85,8 +91,12 @@ def run_training_loop():
                                   (torch.abs(ratios - 1.0) > EPS_CLIP).float().mean().item(),
                                   global_step)
                 global_step += 1
+                total_loss += loss.item()
+            avg_loss = total_loss / len(dataloader)
+            pbar.set_postfix(loss=f"{avg_loss:.4f}")
+            pbar.update(1)
     
-    pbar.close()
+        pbar.close()
     writer.close()
 
     save_path = os.path.join("checkpoints", "ppo_agent_final.pth")
