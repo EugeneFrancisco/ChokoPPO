@@ -51,7 +51,13 @@ class ReplayBuffer:
         '''
         dataset_obs, actions, masks, logps, advantages, returns = self.make_dataset()
         dataset = RLDataset(dataset_obs, actions, masks, logps, advantages, returns)
-        dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = shuffle, num_workers = num_workers)
+        dataloader = DataLoader(
+            dataset, 
+            batch_size = batch_size, 
+            shuffle = shuffle, 
+            num_workers = num_workers,
+            drop_last = True
+            )
         return dataloader
 
     def make_dataset(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
