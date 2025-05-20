@@ -327,6 +327,24 @@ class Choko_Env:
                 raise ValueError("Invalid move: Cannot jump over empty space")
 
         return next_row, next_col, between_row, between_col
+    
+    def render(self):
+        '''
+        Renders the board to make it a bit easier on the eyes.
+        '''
+        copy = self.board.copy()
+        # map values to symbols
+        symbols = {0: '.', 1: 'X', 2: 'O'}
+        cols = copy.shape[1]
+
+        # print column headers
+        print("   " + " ".join(str(c) for c in range(cols)))
+
+        # print each row
+        for r, row in enumerate(copy):
+            line = " ".join(symbols[val] for val in row)
+            print(f"{r}  {line}")
+
 
     @staticmethod
     def to_info(action):
