@@ -1,5 +1,7 @@
 import numpy as np
 
+NUM_ACTIONS = (25) + (25 * 4) + (25 * 4 * 25) # 2625 possible actions
+BOARD_DIM = 5
 
 def compute_gae_and_returns(rewards, values, gamma, lam) -> tuple[list, list]:
     '''

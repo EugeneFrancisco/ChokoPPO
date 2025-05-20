@@ -14,9 +14,10 @@ NEG_INF = -1e10
 NUM_TASKS = 2 # seems to be the fastest of the different numbers I tried
 
 class RLDataset(Dataset):
-    def __init__(self, obs, actions, logps, advantages, returns):
+    def __init__(self, obs, actions, masks, logps, advantages, returns):
         self.obs = torch.from_numpy(obs).float()
         self.actions = torch.from_numpy(actions)
+        self.masks = torch.from_numpy(masks).float()
         self.advantages = torch.from_numpy(advantages).float()
         self.logps = torch.from_numpy(logps).float()
         self.returns = torch.from_numpy(returns).float()
@@ -26,7 +27,14 @@ class RLDataset(Dataset):
         return len(self.obs)
     
     def __getitem__(self, idx):
-        return (self.obs[idx], self.actions[idx], self.logps[idx], self.advantages[idx], self.returns[idx])
+        return (
+            self.obs[idx], 
+            self.actions[idx],
+            self.masks[idx],
+            self.logps[idx], 
+            self.advantages[idx], 
+            self.returns[idx]
+            )
 
 class ReplayBuffer:
     def __init__(self, gamma, lam, ppo_agent, max_size = MAX_SIZE):
@@ -41,8 +49,8 @@ class ReplayBuffer:
         '''
         Returns a DataLoader for the dataset
         '''
-        dataset_obs, actions, logps, advantages, returns = self.make_dataset()
-        dataset = RLDataset(dataset_obs, actions, logps, advantages, returns)
+        dataset_obs, actions, masks, logps, advantages, returns = self.make_dataset()
+        dataset = RLDataset(dataset_obs, actions, masks, logps, advantages, returns)
         dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = shuffle, num_workers = num_workers)
         return dataloader
 
@@ -51,6 +59,8 @@ class ReplayBuffer:
         Returns a tuple of (dataset_obs, actions, advantages, returns) where:
             dataset_obs: [max_size, 25] a numpy array of observations
             actions: [max_size] a numpy array of actions
+            masks: [max_size] a numpy array of masks
+            logps: [max_size] a numpy array of log probabilities
             advantages: [max_size] a numpy array of advantages
             returns: [max_size] a numpy array of returns
         Strategy:
@@ -67,6 +77,7 @@ class ReplayBuffer:
         '''
         dataset_obs = []
         actions = []
+        masks = []
         logps = []
         advantages = []
         returns = []
@@ -80,11 +91,12 @@ class ReplayBuffer:
                 results = [future.result() for future in concurrent.futures.as_completed(futures)]
             
             for result in results:
-                rollout_obs, rollout_actions, rollout_logps, rollout_advantages, rollout_returns = result
+                rollout_obs, rollout_actions, rollout_masks, rollout_logps, rollout_advantages, rollout_returns = result
                 
                 dataset_obs.extend(rollout_obs)
                 actions.extend(rollout_actions)
                 logps.extend(rollout_logps)
+                masks.extend(rollout_masks)
                 advantages.extend(rollout_advantages)
                 returns.extend(rollout_returns)
                 pbar.update(len(rollout_obs))
@@ -93,11 +105,12 @@ class ReplayBuffer:
         # convert the lists to numpy arrays
         dataset_obs = np.array(dataset_obs)
         actions = np.array(actions)
+        masks = np.array(masks)
         logps = np.array(logps)
         advantages = np.array(advantages)
         returns = np.array(returns)
 
-        return dataset_obs, actions, logps, advantages, returns
+        return dataset_obs, actions, masks, logps, advantages, returns
     
     def run_one_episode(self):
         '''
@@ -112,17 +125,20 @@ class ReplayBuffer:
         # sample a trajectory
         all_obs = []
         all_actions = []
+        all_masks = []
         all_logps = []
         all_advantages = []
         all_returns = []
 
         player_1_states = []
         player_1_actions = []
+        player_1_masks = []
         player_1_logps = []
         player_1_rewards = []
         
         player_2_states = []
         player_2_actions = []
+        player_2_masks = []
         player_2_logps = []
         player_2_rewards = []
 
@@ -141,8 +157,8 @@ class ReplayBuffer:
                     player_2_states.append(obs)
                 # (2) get the action and add the action
 
-                mask = torch.from_numpy(mask).float().unsqueeze(0)
-                dist = self.agent(obs_torch, mask)
+                torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
+                dist = self.agent(obs_torch, torch_mask)
                 action = dist.sample()
 
                 logp = dist.log_prob(action)
@@ -151,9 +167,11 @@ class ReplayBuffer:
                 if env.player == 1:
                     player_1_actions.append(action.item())
                     player_1_logps.append(logp_value)
+                    player_1_masks.append(mask)
                 else:
                     player_2_actions.append(action.item())
                     player_2_logps.append(logp_value)
+                    player_2_masks.append(mask)
 
                 state, reward, done, _ = env.step(action.item())
                 raw_obs, mask = state
@@ -206,16 +224,23 @@ class ReplayBuffer:
             
             all_obs.extend(player_1_states)
             all_obs.extend(player_2_states)
+
             all_actions.extend(player_1_actions)
             all_actions.extend(player_2_actions)
+
+            all_masks.extend(player_1_masks)
+            all_masks.extend(player_2_masks)
+
             all_logps.extend(player_1_logps)
             all_logps.extend(player_2_logps)
+
             all_advantages.extend(player_1_advantages)
             all_advantages.extend(player_2_advantages)
+
             all_returns.extend(player_1_returns)
             all_returns.extend(player_2_returns)
             
-            return all_obs, all_actions, all_logps, all_advantages, all_returns
+            return all_obs, all_actions, all_masks, all_logps, all_advantages, all_returns
         
             
 
@@ -228,9 +253,10 @@ if __name__ == "__main__":
     buffer = ReplayBuffer(0.99, 0.95, ppo_agent=ppo_agent, max_size = 5000)
     dataloader = buffer.make_dataloader(batch_size = 64, shuffle = True, num_workers = 0)
     for batch in dataloader:
-        obs, actions, logps, advantages, returns = batch
+        obs, actions, masks, logps, advantages, returns = batch
         print(obs.shape)
         print(actions.shape)
+        print(masks.shape)
         print(logps.shape)
         print(advantages.shape)
         print(returns.shape)
