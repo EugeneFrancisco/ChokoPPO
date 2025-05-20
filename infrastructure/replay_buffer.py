@@ -107,7 +107,8 @@ class ReplayBuffer:
                 returns.extend(rollout_returns)
                 pbar.update(len(rollout_obs))
 
-            
+        pbar.close()
+        
         # convert the lists to numpy arrays
         dataset_obs = np.array(dataset_obs)
         actions = np.array(actions)
