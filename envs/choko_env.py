@@ -101,6 +101,12 @@ class Choko_Env:
                 self.pieces_captured[3 - self.player] += 1
                 reward += 0.1
         
+        done: str = self.evaluate_termination()
+    
+        if done != "ongoing":
+            if done == "won":
+                reward += 2
+        
         if not self.freeze_turns:
             self.player = 3 - self.player
         
@@ -108,16 +114,15 @@ class Choko_Env:
         
         state: tuple[np.ndarray, np.ndarray] = self.fetch_obs_action_mask()
         _, mask = state
-        done: str = self.evaluate_termination(mask)
-    
-        if done != "ongoing":
-            if done == "won":
-                reward += 2
         info = {}
+
+        if mask.sum() == 0 and done == "ongoing":
+            done = "draw"
+            
 
         return state, reward, done, info
     
-    def evaluate_termination(self, mask) -> str:
+    def evaluate_termination(self) -> str:
         '''
         Evaluates whether the game is won, drawn, or ongoing.
         Returns "won" if the player who is currently playing has won,
@@ -125,9 +130,7 @@ class Choko_Env:
         '''
         if self.num_moves >= MAX_GAME_LENGTH:
             return "draw"
-        
-        if mask.sum() == 0:
-            return "draw"
+    
 
         if self.pieces_captured[3 - self.player] == NUM_PIECES_PER_PLAYER:
             # I want to evaluate if the player who is currently playing
@@ -234,7 +237,7 @@ class Choko_Env:
         between_col = col
         # 0, 1, 2, 3 = up, right, down, left
         if move_type == "jump":
-            if self.drop_initiative != player and self.drop_initiative != 0:
+            if self.pieces_left[player] > 0 and self.drop_initiative != player and self.drop_initiative != 0:
                 # print("Invalid move: Not your drop initiative")
                 return False
             if direction == 0:
@@ -251,7 +254,7 @@ class Choko_Env:
                 between_col = col - 1
         else:
             # Normal move
-            if self.drop_initiative != player and self.drop_initiative != 0:
+            if self.pieces_left[player] > 0 and self.drop_initiative != player and self.drop_initiative != 0:
                 # print("Invalid move: Not your drop initiative")
                 return False
             if direction == 0:

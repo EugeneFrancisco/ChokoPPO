@@ -20,12 +20,13 @@ C1 = 0.5
 C2 = 0.01
 EPS_CLIP = 0.2
 NEG_INF = -1e10
+EVAL_ROUNDS = 100
 
 # TODO: add a config file
 
 
 def run_training_loop():
-    writer = SummaryWriter(log_dir = "logs/run_6")
+    writer = SummaryWriter(log_dir = "logs/run_7")
     global_step = 0
 
     ppo_agent = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
@@ -60,7 +61,6 @@ def run_training_loop():
                 old_logps = old_logps.to(ppo_agent.device)
                 masks = masks.to(ppo_agent.device)
                 advantages = advantages.to(ppo_agent.device)
-                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
                 returns = returns.to(ppo_agent.device)
                 total_returns += returns.mean().item()
 
@@ -85,10 +85,10 @@ def run_training_loop():
 
                 # compute entropy loss
                 dist = Categorical(probs)
-                entropy_loss = -torch.mean(dist.entropy())
+                entropy_loss = torch.mean(dist.entropy())
             
                 # combining the losses
-                loss = actor_loss + C1 * critic_loss + C2 * entropy_loss
+                loss = actor_loss + C1 * critic_loss - C2 * entropy_loss
                 ppo_agent.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(ppo_agent.parameters(), 0.5)
@@ -124,11 +124,20 @@ def run_training_loop():
             total_wins = 0
             total_losses = 0
             total_draws = 0
-            for j in range(100):
+
+            for j in range(EVAL_ROUNDS/2):
                 winner = agent_v_agent(ppo_agent, ppo_agent_frozen)
                 if winner == 1:
                     total_wins += 1
                 elif winner == 2:
+                    total_losses += 1
+                else:
+                    total_draws += 1
+            for j in range(EVAL_ROUNDS/2):
+                winner = agent_v_agent(ppo_agent_frozen, ppo_agent)
+                if winner == 2:
+                    total_wins += 1
+                elif winner == 1:
                     total_losses += 1
                 else:
                     total_draws += 1
@@ -148,8 +157,6 @@ def run_training_loop():
                 "loss": loss.item()
             }, save_path)
             print(f"Iteration {i + 1}/{NUM_ITERATIONS} completed. Model saved to {save_path}")
-        
-        # TODO, evaluate the agent against frozen agent every 10 iterations, say.
 
         pbar.close()
     writer.close()

@@ -115,6 +115,11 @@ class ReplayBuffer:
         masks = np.array(masks)
         logps = np.array(logps)
         advantages = np.array(advantages)
+
+        adv_mean = advantages.mean()
+        adv_std  = advantages.std() + 1e-8    
+        advantages = (advantages - adv_mean) / adv_std
+
         returns = np.array(returns)
 
         return dataset_obs, actions, masks, logps, advantages, returns
@@ -164,8 +169,10 @@ class ReplayBuffer:
                     player_2_states.append(obs)
                 # (2) get the action and add the action
 
+                # TODO, change masks to int
                 torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
-                dist = self.agent(obs_torch, torch_mask)
+                with torch.no_grad():
+                    dist = self.agent(obs_torch, torch_mask)
                 action = dist.sample()
 
                 logp = dist.log_prob(action)
@@ -204,12 +211,14 @@ class ReplayBuffer:
                     break
             
             player_1_states_np = np.stack(player_1_states, axis = 0)
-            player_1_values_tensor = self.critic(torch.as_tensor(player_1_states_np).float())
+            with torch.no_grad():
+                player_1_values_tensor = self.critic(torch.as_tensor(player_1_states_np).float())
             player_1_values = player_1_values_tensor.tolist()
             player_1_values.append(0) # add the last value to the trajectory
             
             player_2_states_np = np.stack(player_2_states, axis = 0)
-            player_2_values_tensor = self.critic(torch.as_tensor(player_2_states_np).float())
+            with torch.no_grad():
+                player_2_values_tensor = self.critic(torch.as_tensor(player_2_states_np).float())
             player_2_values = player_2_values_tensor.tolist()
             player_2_values.append(0)
 

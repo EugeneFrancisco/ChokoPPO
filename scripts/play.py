@@ -94,27 +94,39 @@ if __name__ == "__main__":
     agent_new = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
     agent_new.switch_to_cpu()
     checkpoint = torch.load(
-        "checkpoints/ppo_agent_330.pth",
+        "checkpoints/ppo_agent_1990.pth",
         map_location=agent_new.device,         # ensures weights land on the right device
         weights_only=True                  # suppresses the FutureWarning by only loading tensors
     )
     agent_new.load_state_dict(checkpoint["model_state_dict"])
     agent_new.eval()
     
-    # agent_old = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
-    # agent_old.switch_to_cpu()
-    # checkpoint = torch.load(
-    #     "checkpoints/ppo_agent_9.pth",
-    #     map_location=agent_old.device,         # ensures weights land on the right device
-    #     weights_only=True                  # suppresses the FutureWarning by only loading tensors
-    # )
-    # agent_old.load_state_dict(checkpoint["model_state_dict"])
-    # agent_old.eval()
+    agent_old = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
+    agent_old.switch_to_cpu()
+    checkpoint = torch.load(
+        "checkpoints/ppo_agent_50.pth",
+        map_location=agent_old.device,         # ensures weights land on the right device
+        weights_only=True                  # suppresses the FutureWarning by only loading tensors
+    )
+    agent_old.load_state_dict(checkpoint["model_state_dict"])
+    agent_old.eval()
 
-    # outcome = agent_v_agent(agent_old, agent_new)
-    # print(outcome)
+    first_win_count = 0
+    second_win_count = 0
+    draw_count = 0
+    for i in range(100):
+        outcome = agent_v_agent(agent_old, agent_new)
+        if outcome == 1:
+            first_win_count += 1
+        elif outcome == 2:
+            second_win_count += 1
+        else:
+            draw_count += 1
+    print(f"Agent 1 wins: {first_win_count}")
+    print(f"Agent 2 wins: {second_win_count}")
+    print(f"Draws: {draw_count}")
 
-    user_v_agent(agent_new)
+    #user_v_agent(agent_new)
 
 
 
