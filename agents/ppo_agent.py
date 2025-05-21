@@ -20,7 +20,7 @@ class PPOAgent(nn.Module):
         )
         self.actor_head = nn.Linear(self.hidden_dim, self.num_actions)
         self.critic_head = nn.Linear(self.hidden_dim, 1)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         self.eps = 1e-8
         self.trunk.to(self.device)
         self.actor_head.to(self.device)

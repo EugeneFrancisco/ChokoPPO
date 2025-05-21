@@ -56,18 +56,38 @@ def parse_inputs(inputs: list[str], env: Choko_Env) -> int:
             return -1
         row = int(inputs[1])
         col = int(inputs[2])
-        direction = int(inputs[3])
+        direction = inputs[3]
+        if direction == "up":
+            direction = 0
+        elif direction == "right":
+            direction = 1
+        elif direction == "down":
+            direction = 2
+        elif direction == "left":
+            direction = 3
+        else:
+            return -1
         if env.is_move_valid(row, col, direction, action_type):
             action = env.to_action(row, col, action_type, direction = direction)
             return action
         else:
             return -1
-    elif action_type == "capture":
+    elif action_type == "jump":
         if len(inputs) < 6:
             return -1
         row = int(inputs[1])
         col = int(inputs[2])
-        direction = int(inputs[3])
+        direction = inputs[3]
+        if direction == "up":
+            direction = 0
+        elif direction == "right":
+            direction = 1
+        elif direction == "down":
+            direction = 2
+        elif direction == "left":
+            direction = 3
+        else:
+            return -1
         capture_row = int(inputs[4])
         capture_col = int(inputs[5])
         if env.is_move_valid(row, col, direction, action_type):

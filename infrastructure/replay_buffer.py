@@ -160,7 +160,7 @@ class ReplayBuffer:
                     player_1_states.append(obs)
                 else:
                     obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
-                    obs_torch = 3 - torch.from_numpy(obs).float().unsqueeze(0)
+                    obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
                     player_2_states.append(obs)
                 # (2) get the action and add the action
 
@@ -192,14 +192,14 @@ class ReplayBuffer:
                 if done != "ongoing":
                     # the game is over, need to check if this player won because then the
                     # last reward for the opponent is -1.
-                    if reward == 1:
+                    if done == "won":
                         # the player who just played won
                         if env.player == 2:
                             # player 1 won, need to set the last reward for player 2 to -1
-                            player_2_rewards[-1] = -1
+                            player_2_rewards[-1] = -2
                         else:
                             # player 2 won, need to set the last reward for player 1 to -1
-                            player_1_rewards[-1] = -1
+                            player_1_rewards[-1] = -2
                     # add the last state to the trajectory
                     break
             

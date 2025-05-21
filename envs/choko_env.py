@@ -4,7 +4,7 @@ import numpy as np
 NUM_ACTIONS = (25) + (25 * 4) + (25 * 4 * 25) # 2625 possible actions
 BOARD_DIM = 5
 NUM_PIECES_PER_PLAYER = 12
-MAX_GAME_LENGTH = 100
+MAX_GAME_LENGTH = 200
 
 class Choko_Env:
     def __init__(self):
@@ -33,6 +33,7 @@ class Choko_Env:
         # First 25 moves are for placing a piece
         info_map = self.to_info(action)
         move_type = info_map["move_type"]
+        reward = 0
         if move_type == "place":
             if self.drop_initiative == 0:
                 # this is the first placement after a moving phase
@@ -50,7 +51,7 @@ class Choko_Env:
         # next 48 moves are for moving a piece
         elif move_type == "move":
             
-            if self.drop_initiative != self.player and self.drop_initiative != 0:
+            if self.pieces_left[self.player] > 0 and self.drop_initiative != self.player and self.drop_initiative != 0:
                 # we are trying to move a piece but the drop initiative is set
                 # to the other player
                 raise ValueError("Invalid move: Not your drop initiative")
@@ -69,7 +70,8 @@ class Choko_Env:
             self.board[row, col] = 0
         
         else:
-            if self.drop_initiative != self.player and self.drop_initiative != 0:
+            # jump move
+            if self.pieces_left[self.player] > 0 and self.drop_initiative != self.player and self.drop_initiative != 0:
                 # we are trying to move a piece but the drop initiative is set
                 # to the other player
                 raise ValueError("Invalid move: Not your drop initiative")
@@ -87,6 +89,7 @@ class Choko_Env:
             # first capture:
             self.board[between_row, between_col] = 0
             self.pieces_captured[3 - self.player] += 1
+            reward += 0.1
 
             # extra capture
             if self.board[capture_row, capture_col] == self.player:
@@ -96,6 +99,7 @@ class Choko_Env:
                 # we are capturing an opponent's piece
                 self.board[capture_row, capture_col] = 0
                 self.pieces_captured[3 - self.player] += 1
+                reward += 0.1
         
         if not self.freeze_turns:
             self.player = 3 - self.player
@@ -104,22 +108,11 @@ class Choko_Env:
         
         state: tuple[np.ndarray, np.ndarray] = self.fetch_obs_action_mask()
         _, mask = state
-        game_condition: str = self.evaluate_termination(mask)
-        
-        if game_condition == "draw" or game_condition == "won":
-            done = True
-        else:
-            done = False
-        
-        if game_condition != "ongoing":
-            if game_condition == "draw":
-                reward = 0
-            else:
-                reward = 1
-        else:
-            reward = 0
         done: str = self.evaluate_termination(mask)
-        reward: int = 1 if done else 0 # reward is 1 if the player playing wins, 0 otherwise
+    
+        if done != "ongoing":
+            if done == "won":
+                reward += 2
         info = {}
 
         return state, reward, done, info
@@ -230,9 +223,10 @@ class Choko_Env:
         information, just a boolean.
         '''
         player = self.player if player is None else player
-
+        # TODO add debug statements to all of these conditions.
         if self.board[row, col] != player:
             # Cannot move a piece that is not yours
+            # print("Invalid move: Not your piece")
             return False
         next_row = row
         next_col = col
@@ -240,6 +234,9 @@ class Choko_Env:
         between_col = col
         # 0, 1, 2, 3 = up, right, down, left
         if move_type == "jump":
+            if self.drop_initiative != player and self.drop_initiative != 0:
+                # print("Invalid move: Not your drop initiative")
+                return False
             if direction == 0:
                 next_row = row - 2
                 between_row = row - 1
@@ -254,6 +251,9 @@ class Choko_Env:
                 between_col = col - 1
         else:
             # Normal move
+            if self.drop_initiative != player and self.drop_initiative != 0:
+                # print("Invalid move: Not your drop initiative")
+                return False
             if direction == 0:
                 next_row = row - 1
             elif direction == 2:
@@ -265,18 +265,22 @@ class Choko_Env:
         
         if next_row < 0 or next_row >= BOARD_DIM or next_col < 0 or next_col >= BOARD_DIM:
             # out of bounds
+            # print("out of bounds")
             return False
         
         if self.board[next_row, next_col] != 0:
             # cell we are moving to is already occupied
+            # print("cell already occupied")
             return False
 
         if move_type == "jump":
             if self.board[between_row, between_col] == player:
                 # cannot jump over your own piece
+                # print("cannot jump over your own piece")
                 return False
             if self.board[between_row, between_col] == 0:
                 # cannot jump over empty space
+                # print("cannot jump over empty space")
                 return False
 
         return True
