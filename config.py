@@ -6,6 +6,11 @@ ROLLOUT_LENGTH = 4096
 HIDDEN_DIM     = 64
 NUM_EPOCHS     = 6
 NUM_ITERATIONS = 2000
+LEARNING_RATE = 1e-4
+
+# replay buffer hyperparameters
+MAX_BUFFER_SIZE = 10000
+NUM_TASKS = 2
 
 # environment / action settings
 NUM_ACTIONS = (25) + (25 * 4) + (25 * 4 * 25)  # 2625 possible actions

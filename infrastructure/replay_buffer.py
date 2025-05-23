@@ -8,16 +8,14 @@ import torch
 import torch.nn as nn
 import concurrent.futures
 import tqdm
+import config
 
-MAX_SIZE = 1000000
-NEG_INF = -1e10
-NUM_TASKS = 2 # seems to be the fastest of the different numbers I tried
 
 class RLDataset(Dataset):
     def __init__(self, obs, actions, masks, logps, advantages, returns):
         self.obs = torch.from_numpy(obs).float()
         self.actions = torch.from_numpy(actions)
-        self.masks = torch.from_numpy(masks).float()
+        self.masks = torch.from_numpy(masks).long()
         self.advantages = torch.from_numpy(advantages).float()
         self.logps = torch.from_numpy(logps).float()
         self.returns = torch.from_numpy(returns).float()
@@ -37,7 +35,7 @@ class RLDataset(Dataset):
             )
 
 class ReplayBuffer:
-    def __init__(self, gamma, lam, ppo_agent, max_size = MAX_SIZE):
+    def __init__(self, gamma, lam, ppo_agent, max_size = config.MAX_BUFFER_SIZE):
         self.gamma = gamma
         self.lam = lam
         self.max_size = max_size
@@ -93,7 +91,7 @@ class ReplayBuffer:
         while len(dataset_obs) < self.max_size:
             
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(self.run_one_episode) for _ in range(NUM_TASKS)]
+                futures = [executor.submit(self.run_one_episode) for _ in range(config.NUM_TASKS)]
                 results = [future.result() for future in concurrent.futures.as_completed(futures)]
             
             for result in results:
@@ -112,7 +110,7 @@ class ReplayBuffer:
         # convert the lists to numpy arrays
         dataset_obs = np.array(dataset_obs)
         actions = np.array(actions)
-        masks = np.array(masks)
+        masks = np.array(masks, dtype=np.int8)
         logps = np.array(logps)
         advantages = np.array(advantages)
 
@@ -169,7 +167,6 @@ class ReplayBuffer:
                     player_2_states.append(obs)
                 # (2) get the action and add the action
 
-                # TODO, change masks to int
                 torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
                 with torch.no_grad():
                     dist = self.agent(obs_torch, torch_mask)

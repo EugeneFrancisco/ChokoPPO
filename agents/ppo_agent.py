@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch.distributions import Categorical
-
-NEG_INF = -1e10
+import config
 
 class PPOAgent(nn.Module):
     def __init__(self, num_actions: int, hidden_dim: int = 64):
@@ -20,8 +19,7 @@ class PPOAgent(nn.Module):
         )
         self.actor_head = nn.Linear(self.hidden_dim, self.num_actions)
         self.critic_head = nn.Linear(self.hidden_dim, 1)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
-        self.eps = 1e-8
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=config.LEARNING_RATE)
         self.trunk.to(self.device)
         self.actor_head.to(self.device)
         self.critic_head.to(self.device)
@@ -64,10 +62,27 @@ class PPOAgent(nn.Module):
         
         trunk_out = self.trunk(obs)
         action_logits = self.actor_head(trunk_out)
-        masked_logits = action_logits + (1 - mask) * NEG_INF
+        masked_logits = action_logits + (1 - mask) * config.NEG_INF
         probs = torch.softmax(masked_logits, dim=-1)
         dist = Categorical(probs)
         return dist
+    
+    def act_greedy(self, obs: torch.Tensor, mask: torch.Tensor) -> int:
+        '''
+        Given an observation and a mask of the action space,
+        returns the action sampled from the policy.
+        Args:
+            obs: [1, 25] tensor of observations
+            mask: [1, 2625] tensor of action mask (note that 1 means keep and 0 means remove)
+        Returns:
+            action: int, the action sampled from the policy
+        '''
+        trunk_out = self.trunk(obs)
+        action_logits = self.actor_head(trunk_out)
+        masked_logits = action_logits + (1 - mask) * config.NEG_INF
+        probs = torch.softmax(masked_logits, dim=-1)
+        action = torch.argmax(probs).item()
+        return action
     
     def critic(self, obs: torch.Tensor) -> torch.Tensor:
         '''

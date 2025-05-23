@@ -52,7 +52,8 @@ def run_training_loop():
 
                 # computing the actor loss
                 action_logits, values = ppo_agent(obs)
-                masked_logits = action_logits + (1 - masks) * config.NEG_INF
+                float_mask = masks.float()
+                masked_logits = action_logits + (1 - float_mask) * config.NEG_INF
                 probs = torch.softmax(masked_logits, dim = -1)
                 all_log_probs = torch.log_softmax(masked_logits, dim = -1)
                 log_probs = all_log_probs[torch.arange(0, actions.shape[0]), actions]
