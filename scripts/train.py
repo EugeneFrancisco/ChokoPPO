@@ -9,49 +9,35 @@ from torch.distributions import Categorical
 import numpy as np
 import tqdm
 import os
-
-BATCH_SIZE = 128
-ROLLOUT_LENGTH = 4096
-HIDDEN_DIM = 64
-NUM_EPOCHS = 6
-NUM_ITERATIONS = 2000
-NUM_ACTIONS = (25) + (25 * 4) + (25 * 4 * 25) # 2625 possible actions
-C1 = 0.5
-C2 = 0.01
-EPS_CLIP = 0.2
-NEG_INF = -1e10
-EVAL_ROUNDS = 100
-
-# TODO: add a config file
+import config
 
 
 def run_training_loop():
-    writer = SummaryWriter(log_dir = "logs/run_7")
+    writer = SummaryWriter(log_dir = "logs/run_8")
     global_step = 0
 
-    ppo_agent = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
-    ppo_agent_frozen = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
+    ppo_agent = PPOAgent(num_actions = config.NUM_ACTIONS, hidden_dim = config.HIDDEN_DIM)
+    ppo_agent_frozen = PPOAgent(num_actions = config.NUM_ACTIONS, hidden_dim = config.HIDDEN_DIM)
     ppo_agent_frozen.load_state_dict(ppo_agent.state_dict())
     ppo_agent_frozen.eval()
     ppo_agent_frozen.switch_to_cpu()
-    for i in range(NUM_ITERATIONS):
+    for i in range(config.NUM_ITERATIONS):
         ppo_agent.eval()
         ppo_agent.switch_to_cpu()
-        buffer = ReplayBuffer(gamma = 0.99, lam = 0.95, ppo_agent = ppo_agent, max_size = ROLLOUT_LENGTH)
+        buffer = ReplayBuffer(gamma = config.GAMMA, lam = config.LAM, ppo_agent = ppo_agent, max_size = config.ROLLOUT_LENGTH)
         dataloader = buffer.make_dataloader(
-            batch_size = BATCH_SIZE, 
+            batch_size = config.BATCH_SIZE, 
             shuffle = True, 
             num_workers = 2
             )
         ppo_agent.switch_to_device()
         ppo_agent.train()
-        pbar = tqdm.tqdm(total = NUM_EPOCHS, desc = "Training")
-        for _ in range(NUM_EPOCHS):
+        pbar = tqdm.tqdm(total = config.NUM_EPOCHS, desc = "Training")
+        for _ in range(config.NUM_EPOCHS):
             total_loss = 0.0
             total_actor_loss = 0.0
             total_critic_loss = 0.0
             total_entropy_loss = 0.0
-            total_clip_frac = 0.0
             total_returns = 0.0
             for batch in dataloader:
                 obs, actions, masks, old_logps, advantages, returns = batch
@@ -66,13 +52,13 @@ def run_training_loop():
 
                 # computing the actor loss
                 action_logits, values = ppo_agent(obs)
-                masked_logits = action_logits + (1 - masks) * NEG_INF
+                masked_logits = action_logits + (1 - masks) * config.NEG_INF
                 probs = torch.softmax(masked_logits, dim = -1)
                 all_log_probs = torch.log_softmax(masked_logits, dim = -1)
                 log_probs = all_log_probs[torch.arange(0, actions.shape[0]), actions]
                 
                 ratios = torch.exp(log_probs - old_logps)
-                clipped_ratios = torch.clamp(ratios, 1.0 - EPS_CLIP, 1.0 + EPS_CLIP)
+                clipped_ratios = torch.clamp(ratios, 1.0 - config.EPS_CLIP, 1.0 + config.EPS_CLIP)
 
                 surrogate_1 = ratios * advantages
                 surrogate_2 = clipped_ratios * advantages
@@ -88,7 +74,7 @@ def run_training_loop():
                 entropy_loss = torch.mean(dist.entropy())
             
                 # combining the losses
-                loss = actor_loss + C1 * critic_loss - C2 * entropy_loss
+                loss = actor_loss + config.C1 * critic_loss - config.C2 * entropy_loss
                 ppo_agent.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(ppo_agent.parameters(), 0.5)
@@ -100,7 +86,7 @@ def run_training_loop():
                 total_actor_loss += actor_loss.item()
                 total_critic_loss += critic_loss.item()
                 total_entropy_loss += entropy_loss.item()
-                writer.add_scalar("Loss/clip_frac", (ratios > 1.0 + EPS_CLIP).float().mean(), global_step)
+                writer.add_scalar("Loss/clip_frac", (ratios > 1.0 + config.EPS_CLIP).float().mean(), global_step)
 
             avg_loss = total_loss / len(dataloader)
             avg_actor_loss = total_actor_loss / len(dataloader)
@@ -125,7 +111,7 @@ def run_training_loop():
             total_losses = 0
             total_draws = 0
 
-            for j in range(EVAL_ROUNDS/2):
+            for j in range(int(config.EVAL_ROUNDS/2)):
                 winner = agent_v_agent(ppo_agent, ppo_agent_frozen)
                 if winner == 1:
                     total_wins += 1
@@ -133,7 +119,7 @@ def run_training_loop():
                     total_losses += 1
                 else:
                     total_draws += 1
-            for j in range(EVAL_ROUNDS/2):
+            for j in range(int(config.EVAL_ROUNDS/2)):
                 winner = agent_v_agent(ppo_agent_frozen, ppo_agent)
                 if winner == 2:
                     total_wins += 1
@@ -156,7 +142,7 @@ def run_training_loop():
                 "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
                 "loss": loss.item()
             }, save_path)
-            print(f"Iteration {i + 1}/{NUM_ITERATIONS} completed. Model saved to {save_path}")
+            print(f"Iteration {i + 1}/{config.NUM_ITERATIONS} completed. Model saved to {save_path}")
 
         pbar.close()
     writer.close()
