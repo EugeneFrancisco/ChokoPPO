@@ -21,10 +21,11 @@ def run_training_loop():
     ppo_agent_frozen.load_state_dict(ppo_agent.state_dict())
     ppo_agent_frozen.eval()
     ppo_agent_frozen.switch_to_cpu()
+    buffer = ReplayBuffer(gamma = config.GAMMA, lam = config.LAM, ppo_agent = ppo_agent, max_size = config.ROLLOUT_LENGTH)
     for i in range(config.NUM_ITERATIONS):
         ppo_agent.eval()
         ppo_agent.switch_to_cpu()
-        buffer = ReplayBuffer(gamma = config.GAMMA, lam = config.LAM, ppo_agent = ppo_agent, max_size = config.ROLLOUT_LENGTH)
+        buffer.refresh(ppo_agent) #TODO
         dataloader = buffer.make_dataloader(
             batch_size = config.BATCH_SIZE, 
             shuffle = True, 
@@ -52,8 +53,8 @@ def run_training_loop():
 
                 # computing the actor loss
                 action_logits, values = ppo_agent(obs)
-                float_mask = masks.float()
-                masked_logits = action_logits + (1 - float_mask) * config.NEG_INF
+                float_mask = (~masks).bool()
+                masked_logits = action_logits.masked_fill(float_mask, config.NEG_INF)
                 probs = torch.softmax(masked_logits, dim = -1)
                 all_log_probs = torch.log_softmax(masked_logits, dim = -1)
                 log_probs = all_log_probs[torch.arange(0, actions.shape[0]), actions]
@@ -103,6 +104,8 @@ def run_training_loop():
             pbar.set_postfix(loss=f"{avg_loss:.4f}")
             pbar.update(1)
         
+        pbar.close()
+        
         if (i % 10 == 0):
             
             # evaluate the agent against the frozen agent:
@@ -137,6 +140,7 @@ def run_training_loop():
             ppo_agent.train()
             ppo_agent.switch_to_device()
 
+        if (i % 50 == 0):
             save_path = os.path.join("checkpoints", f"ppo_agent_{i}.pth")
             torch.save({
                 "model_state_dict": ppo_agent.state_dict(),
@@ -144,8 +148,14 @@ def run_training_loop():
                 "loss": loss.item()
             }, save_path)
             print(f"Iteration {i + 1}/{config.NUM_ITERATIONS} completed. Model saved to {save_path}")
-
-        pbar.close()
+    
+    save_path = os.path.join("checkpoints", f"ppo_agent_final.pth")
+    torch.save({
+        "model_state_dict": ppo_agent.state_dict(),
+        "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
+        "loss": loss.item()
+    }, save_path)
+    print(f"Final model completed. Model saved to {save_path}")  
     writer.close()
 
 

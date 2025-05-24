@@ -5,7 +5,7 @@ BATCH_SIZE     = 128
 ROLLOUT_LENGTH = 4096
 HIDDEN_DIM     = 64
 NUM_EPOCHS     = 6
-NUM_ITERATIONS = 2000
+NUM_ITERATIONS = 3000
 LEARNING_RATE = 1e-4
 
 # replay buffer hyperparameters
@@ -23,3 +23,6 @@ EPS_CLIP = 0.2
 NEG_INF  = -1e10
 GAMMA = 0.99
 LAM = 0.95
+
+# Q leanring hyperparameters
+EPSILON = 0.1
