@@ -1,6 +1,7 @@
 from envs.choko_env import Choko_Env
 from agents.random_agent import RandomAgent
 from agents.ppo_agent import PPOAgent
+from agents.q_agent import QAgent
 from torch.utils.data import Dataset, DataLoader
 from . import utils
 import numpy as np
@@ -65,7 +66,7 @@ class ReplayBuffer:
             batch_size = batch_size, 
             shuffle = shuffle, 
             num_workers = num_workers,
-            persistent_workers=True,
+            persistent_workers=False,
             pin_memory=False,
             drop_last = True
             )
@@ -264,41 +265,172 @@ class ReplayBuffer:
             
             return all_obs, all_actions, all_masks, all_logps, all_advantages, all_returns
         
-            
+class RLDatasetQLearning(Dataset):
+    def __init__(self, obs, actions, masks, targets, next_states, done):
+        self.obs = torch.from_numpy(obs).float()
+        self.actions = torch.from_numpy(actions)
+        masks = np.array(masks, dtype = np.bool)
+        self.masks = torch.from_numpy(masks)
+        self.targets = torch.from_numpy(targets).float()
+        self.next_states = torch.from_numpy(next_states).float()
+        done = np.array(done, dtype = np.bool)
+        self.done = torch.from_numpy(done)
+
+    
+    def __len__(self):
+        return len(self.obs)
+
+    def __getitem__(self, idx):
+        return (
+            self.obs[idx],
+            self.actions[idx],
+            self.masks[idx],
+            self.targets[idx],
+            self.next_states[idx],
+            self.done[idx]
+        )
+
 class ReplayBufferQLearning:
-    def __init__(self, gamma, critic, max_size = config.MAX_BUFFER_SIZE):
+    def __init__(self, gamma, critic, td_gap, max_size = config.MAX_BUFFER_SIZE):
         self.gamma = gamma
         self.max_size = max_size
         self.critic = critic
-        self.td_gap = 5
+        self.td_gap = td_gap
+        self.num_examples = 0
+
+        self.dataset_obs = np.empty((self.max_size, 25))
+        self.actions = np.empty((self.max_size))
+        self.masks = np.empty((self.max_size, config.NUM_ACTIONS), dtype = np.bool)
+        self.targets = np.empty((self.max_size))
+        self.next_states = np.empty((self.max_size, 25))
+        self.done = np.empty((self.max_size), dtype = np.bool)
+
+        self.head = 0 # head of the buffer, where the next episode will be added
+
+    def refresh(self, critic):
+        self.critic = critic
+    
+    def add_episode(self):
+        '''
+        Adds a single episode to the replay buffer using the current critic.
+        '''
+        episode_obs, episode_actions, episode_masks, episode_targets, episode_next_states, episode_done = self.run_one_episode()
+        episode_obs = np.array(episode_obs)
+        episode_actions = np.array(episode_actions)
+        episode_masks = np.array(episode_masks, dtype = np.bool)
+        episode_targets = np.array(episode_targets)
+        episode_next_states = np.array(episode_next_states)
+        episode_done = np.array(episode_done, dtype = np.bool)
+
+            
+        num_to_remove = len(episode_obs)
+        room_at_head = self.max_size - self.head
+        if room_at_head < num_to_remove:
+            num_at_front = num_to_remove - room_at_head
+
+            # first fill the back of the buffer
+            self.dataset_obs[self.head:] = episode_obs[0:room_at_head]
+            self.actions[self.head:] = episode_actions[0:room_at_head]
+            self.masks[self.head:] = episode_masks[0:room_at_head]
+            self.targets[self.head:] = episode_targets[0:room_at_head]
+            self.next_states[self.head:] = episode_next_states[0:room_at_head]
+            self.done[self.head:] = episode_done[0:room_at_head]
+
+            # now wrap around to the front of the buffer
+            self.dataset_obs[0:num_at_front] = episode_obs[room_at_head:]
+            self.actions[0:num_at_front] = episode_actions[room_at_head:]
+            self.masks[0:num_at_front] = episode_masks[room_at_head:]
+            self.targets[0:num_at_front] = episode_targets[room_at_head:]
+            self.next_states[0:num_at_front] = episode_next_states[room_at_head:]
+            self.done[0:num_at_front] = episode_done[room_at_head:]
+            self.head  = (num_to_remove + self.head) % self.max_size
+        else:
+            # we can just fill the back of the buffer
+            self.dataset_obs[self.head:self.head + num_to_remove] = episode_obs
+            self.actions[self.head:self.head + num_to_remove] = episode_actions
+            self.masks[self.head:self.head + num_to_remove] = episode_masks
+            self.targets[self.head:self.head + num_to_remove] = episode_targets
+            self.next_states[self.head:self.head + num_to_remove] = episode_next_states
+            self.done[self.head:self.head + num_to_remove] = episode_done
+
+            self.head = (self.head + num_to_remove) % self.max_size
+
+            
+    
     
     def make_dataloader(self, batch_size = 64, shuffle = True, num_workers = 0) -> DataLoader:
-        # TODO
-        pass
+
+
+        dataset = RLDatasetQLearning(self.dataset_obs, self.actions, self.masks, self.targets, self.next_states, self.done)
+        dataloader = DataLoader(
+            dataset,
+            batch_size = batch_size,
+            shuffle = shuffle,
+            num_workers = num_workers,
+            persistent_workers=True,
+            pin_memory=False,
+            drop_last = True
+        )
+        return dataloader
 
     def make_dataset(self):
         '''
-        Returns a tuple of (dataset_obs, actions, masks, bootstrap_targets, next_states) where:
+        Initializes and populates the dataset_obs, actions, masks, bootstrap_targets, next_states, done
+        fields in the class with data collected from the environment and the critic. Returns nothing.
             dataset_obs: [max_size, 25] a numpy array of observations
             actions: [max_size] a numpy array of actions
             masks: [max_size] a numpy array of masks for which actions are valid at the state
-            bootstrap_targets: [max_size] a numpy array of bootstrap targets
-            next_states: [max_size, 25] a numpy array of next states
+            bootstrap_targets: [max_size] a numpy array of all the summed rewards, *excluding the last target estimate*
+            next_states: [max_size, 25] a numpy array of the last states associated with the targets for computation
+            of the bootstrap target Q value.
+            done: [max_size] a numpy array of booleans indicating whether the episode is done at that state.
         '''
         dataset_obs = []
         actions = []
         masks = []
         bootstrap_targets = []
         next_states = []
+        done = []
+
+        pbar = tqdm.tqdm(total = self.max_size, desc = "Collecting rollouts", unit = "samples")
 
         while len(dataset_obs) < self.max_size:
-            # TODO
-            break
-        pass
+            episode_obs, episode_actions, episode_masks, episode_targets, episode_next_states, episode_done = self.run_one_episode()
+            
+            dataset_obs.extend(episode_obs)
+            actions.extend(episode_actions)
+            masks.extend(episode_masks)
+            bootstrap_targets.extend(episode_targets)
+            
+            next_states.extend(episode_next_states)
+            done.extend(episode_done)
 
-    def run_one_episode(self):
+            pbar.update(len(episode_obs))
+        
+        pbar.close()
+
+        # convert the lists to numpy arrays:
+
+        dataset_obs = np.array(dataset_obs)
+        actions = np.array(actions)
+        masks = np.array(masks, dtype = np.bool)
+        bootstrap_targets = np.array(bootstrap_targets)
+        #print(next_states)
+        next_states = np.array(next_states)
+        done = np.array(done, dtype = np.bool) 
+
+
+        self.dataset_obs = dataset_obs[:self.max_size]
+        self.actions = actions[:self.max_size]
+        self.masks = masks[:self.max_size]
+        self.targets = bootstrap_targets[:self.max_size]
+        self.next_states = next_states[:self.max_size]
+        self.done = done[:self.max_size]
+
+    def run_one_episode(self) -> tuple[list, list, list, list]:
         '''
-        Runs one episode (game) of the environment, computes the bootstrap targets, and returns a tuple of
+        Runs one episode (game) of the environment, computes the bootstrap targets. 
+        Returns:
         (observations, actions, masks, bootstrap_targets, next_states) where:
             observations: [T, 25] a list of numpy observations
             actions: [T] a list of actions
@@ -309,19 +441,25 @@ class ReplayBufferQLearning:
         all_actions = []
         all_masks = []
         all_bootstrap_targets = []
+        all_next_states = []
+        all_done = []
         
         player_1_states = []
         player_1_actions = []
         player_1_masks = []
         player_1_bootstrap_targets = []
+        player_1_next_states = []
+        player_1_done = []
 
         player_2_states = []
         player_2_actions = []
         player_2_masks = []
         player_2_bootstrap_targets = []
+        player_2_next_states = []
+        player_2_done = []
 
-        player_1_buffer = ExperienceBuffer(self.gamma, self.td_gap, self.critic)
-        player_2_buffer = ExperienceBuffer(self.gamma, self.td_gap, self.critic)
+        player_1_buffer = ExperienceBuffer(self.gamma, self.td_gap)
+        player_2_buffer = ExperienceBuffer(self.gamma, self.td_gap)
 
         env = Choko_Env()
         raw_obs, mask = env.reset()
@@ -336,8 +474,8 @@ class ReplayBufferQLearning:
                     obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
                 
                 torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
-                action = self.critic.sample_action(obs_torch, torch_mask) 
 
+                action = self.critic.sample_action(obs_torch, torch_mask) 
                 state_tup, reward, done, _ = env.step(action.item())
 
 
@@ -345,94 +483,139 @@ class ReplayBufferQLearning:
                     if done == "won":
                         winner_reward = 2 + reward
                         loser_reward = -2
+
                     else:
                         # draw
                         winner_reward = 0
                         loser_reward = 0
 
                     if env.player == 1:
-                        target_vals = player_1_buffer.add((obs, obs_torch, action, mask, winner_reward))
+                        # player 1 won, player 2 lost
+                        target_vals = player_1_buffer.add((obs, obs_torch, action.item(), mask, winner_reward))
                         assert target_vals is not None
+                        first_state, first_action, first_mask, bootstrap_target, last_state_numpy = target_vals
                         player_1_states.append(target_vals[0])
                         player_1_actions.append(target_vals[1])
                         player_1_masks.append(target_vals[2])
                         player_1_bootstrap_targets.append(target_vals[3])
+                        player_1_next_states.append(target_vals[4])
+                        player_1_done.append(1)
 
-                        flused_obs_1, flushed_actions_1, flushed_masks_1, flushed_bootstrap_targets_1 = player_1_buffer.flush_buffer()
-                        player_1_states.extend(flused_obs_1)
+                        flushed_obs_1, flushed_actions_1, flushed_masks_1, flushed_bootstrap_targets_1, flushed_next_states = player_1_buffer.flush_buffer()
+                        done_1 = [1 for _ in range(len(flushed_obs_1))]
+                        player_1_states.extend(flushed_obs_1)
                         player_1_actions.extend(flushed_actions_1)
                         player_1_masks.extend(flushed_masks_1)
                         player_1_bootstrap_targets.extend(flushed_bootstrap_targets_1)
+                        player_1_next_states.extend(flushed_next_states)
+                        player_1_done.extend(done_1)
 
-                        # last experience in loser's buffer has edited reward because they lost
-                        target_vals = player_2_buffer.buffer[len(player_2_buffer.buffer) - 1][4] = loser_reward
-                        flushed_obs_2, flushed_actions_2, flushed_masks_2, flushed_bootstrap_targets_2 = player_2_buffer.flush_buffer()
+                        # loser's rewards need to be edited
+                        buffer_length = len(player_2_buffer.buffer)
+                        player_2_buffer.buffer[len(player_2_buffer.buffer) - 1] = (
+                            player_2_buffer.buffer[buffer_length - 1][0],
+                            player_2_buffer.buffer[buffer_length - 1][1],
+                            player_2_buffer.buffer[buffer_length - 1][2],
+                            player_2_buffer.buffer[buffer_length - 1][3],
+                            loser_reward
+                            )
+                        
+                        flushed_obs_2, flushed_actions_2, flushed_masks_2, flushed_bootstrap_targets_2, flushed_next_states_2 = player_2_buffer.flush_buffer()
+                        done_2 = [1 for _ in range(len(flushed_obs_2))]
                         player_2_states.extend(flushed_obs_2)
                         player_2_actions.extend(flushed_actions_2)
                         player_2_masks.extend(flushed_masks_2)
                         player_2_bootstrap_targets.extend(flushed_bootstrap_targets_2)
+                        player_2_next_states.extend(flushed_next_states_2)
+                        player_2_done.extend(done_2)
                     
                     if env.player == 2:
-                        target_vals = player_2_buffer.add((obs, obs_torch, action, mask, 2 + reward))
+                        # player 2 won, player 1 lost
+                        target_vals = player_2_buffer.add((obs, obs_torch, action.item(), mask, 2 + reward))
                         assert target_vals is not None
                         player_2_states.append(target_vals[0])
                         player_2_actions.append(target_vals[1])
                         player_2_masks.append(target_vals[2])
                         player_2_bootstrap_targets.append(target_vals[3])
+                        player_2_next_states.append(target_vals[4])
+                        player_2_done.append(1)
 
-                        flushed_obs_2, flushed_actions_2, flushed_masks_2, flushed_bootstrap_targets_2 = player_2_buffer.flush_buffer()
+                        flushed_obs_2, flushed_actions_2, flushed_masks_2, flushed_bootstrap_targets_2, flushed_next_states_2 = player_2_buffer.flush_buffer()
+                        done_2 = [1 for _ in range(len(flushed_obs_2))]
                         player_2_states.extend(flushed_obs_2)
                         player_2_actions.extend(flushed_actions_2)
                         player_2_masks.extend(flushed_masks_2)
                         player_2_bootstrap_targets.extend(flushed_bootstrap_targets_2)
+                        player_2_next_states.extend(flushed_next_states_2)
+                        player_2_done.extend(done_2)
 
                         # last experience in loser's buffer has edited reward because they lost
-                        target_vals = player_1_buffer.buffer[len(player_1_buffer.buffer) - 1][4] = loser_reward
-                        flushed_obs_1, flushed_actions_1, flushed_masks_1, flushed_bootstrap_targets_1 = player_1_buffer.flush_buffer()
+                        buffer_length = len(player_1_buffer.buffer)
+                        assert buffer_length > 0
+                        player_1_buffer.buffer[buffer_length - 1] = (
+                            player_1_buffer.buffer[buffer_length - 1][0],
+                            player_1_buffer.buffer[buffer_length - 1][1],
+                            player_1_buffer.buffer[buffer_length - 1][2],
+                            player_1_buffer.buffer[buffer_length - 1][3],
+                            loser_reward
+                            )
+                        
+                        flushed_obs_1, flushed_actions_1, flushed_masks_1, flushed_bootstrap_targets_1, flushed_next_states_1, = player_1_buffer.flush_buffer()
+                        done_1 = [1 for _ in range(len(flushed_obs_1))]
                         player_1_states.extend(flushed_obs_1)
                         player_1_actions.extend(flushed_actions_1)
                         player_1_masks.extend(flushed_masks_1)
                         player_1_bootstrap_targets.extend(flushed_bootstrap_targets_1)
+                        player_1_next_states.extend(flushed_next_states_1)
+                        player_1_done.extend(done_1)
                     
                     break
 
                 
                 if env.player == 1:
-                    target_vals = player_1_buffer.add((obs, obs_torch, action, mask, reward))
+                    target_vals = player_1_buffer.add((obs, obs_torch, action.item(), mask, reward))
                     if target_vals is not None:
-                        player_1_states.append(target_vals[0])
-                        player_1_actions.append(target_vals[1])
-                        player_1_masks.append(target_vals[2])
-                        player_1_bootstrap_targets.append(target_vals[3])
+                        state, action, mask, bootstrap_target, next_states = target_vals
+                        player_1_states.append(state)
+                        player_1_actions.append(action)
+                        player_1_masks.append(mask)
+                        player_1_bootstrap_targets.append(bootstrap_target)
+                        player_1_next_states.append(next_states)
+                        player_1_done.append(0)
                 else:
-                    target_vals = player_2_buffer.add((obs, obs_torch, action, mask, reward))
+                    target_vals = player_2_buffer.add((obs, obs_torch, action.item(), mask, reward))
                     if target_vals is not None:
-                        player_2_states.append(target_vals[0])
-                        player_2_actions.append(target_vals[1])
-                        player_2_masks.append(target_vals[2])
-                        player_2_bootstrap_targets.append(target_vals[3])
-
+                        state, action, mask, bootstrap_target, next_states = target_vals
+                        player_2_states.append(state)
+                        player_2_actions.append(action)
+                        player_2_masks.append(mask)
+                        player_2_bootstrap_targets.append(bootstrap_target)
+                        player_2_next_states.append(next_states)
+                        player_2_done.append(0)
                 raw_obs, mask = state_tup
         
         all_obs.extend(player_1_states)
         all_actions.extend(player_1_actions)
         all_masks.extend(player_1_masks)
         all_bootstrap_targets.extend(player_1_bootstrap_targets)
+        all_next_states.extend(player_1_next_states)
+        all_done.extend(player_1_done)
 
         all_obs.extend(player_2_states)
         all_actions.extend(player_2_actions)
         all_masks.extend(player_2_masks)
         all_bootstrap_targets.extend(player_2_bootstrap_targets)
+        all_next_states.extend(player_2_next_states)
+        all_done.extend(player_2_done)
 
-        return all_obs, all_actions, all_masks, all_bootstrap_targets
+        return all_obs, all_actions, all_masks, all_bootstrap_targets, all_done
                 
 
 
 class ExperienceBuffer:
-    def __init__(self, gamma, size, critic):
+    def __init__(self, gamma, size):
         self.size = size
         self.buffer = [] # each element in the buffer is a tuple of (state, action, reward)
-        self.critic = critic
         self.gamma = gamma
         
     def add(self, experience_tuple):
@@ -445,14 +628,12 @@ class ExperienceBuffer:
         Returns:
             a tuple (state (numpy), action, bootstrapped_target): 
                 state: the first state in the buffer
-                action: the first action in the buffer
+                action: the first action in the buffer (not torch type)
                 the bootstrapped target for the experience, or none if the buffer is not full
             or None if the buffer is not full.
         '''
-        # TODO, test this
-        state, state_torch, action, mask, reward = experience_tuple
         self.buffer.append(experience_tuple)
-        if len(self.buffer) > self.size:
+        if len(self.buffer) >= self.size:
             # calculate the bootstrapped target
             bootstrapped_target = 0
             for i in range(len(self.buffer) - 1):
@@ -460,12 +641,9 @@ class ExperienceBuffer:
                 bootstrapped_target += reward * (self.gamma ** i)
             
             last_experience = self.buffer[-1]
-            _, state_torch, action, mask, _ = last_experience
-            # TODO CRITIC POLICY
-            critic_values = self.critic(state_torch)
-            bootstrapped_target += self.gamma ** len(self.buffer) * self.critic.get_value(state_torch, action, mask)
-            first_state, _, first_action, mask, _ = self.buffer.pop(0)
-            return (first_state, first_action, mask, bootstrapped_target)
+            last_state_numpy, _, _, last_mask, _ = last_experience
+            first_state, _, first_action, _, _ = self.buffer.pop(0)
+            return (first_state, first_action, last_mask, bootstrapped_target, last_mask)
         
         return None
     
@@ -473,7 +651,7 @@ class ExperienceBuffer:
         '''
         Empties the remaining experiences in the buffer and calculates the bootstrapped targets for each experience.
         Ideally this should be called at the end of the episode when the last experience in the buffer
-        is the last non-terminal experience. #TODO, is this right?
+        is the last non-terminal experience.
         Returns:
             (obs, actions, masks, bootstrapped_targets) where:
                 obs: a numpy array of observations for each experience in the buffer
@@ -488,11 +666,11 @@ class ExperienceBuffer:
         actions = []
         masks = []
         bootstrapped_targets = []
-
+        next_states = [np.zeros((25)) for _ in range(len(self.buffer))] # Use None to indicate terminal last experience
 
 
         for i in range(len(self.buffer)):
-            target = sum(self.buffer[j][2]*(self.gamma ** j) for j in range(i, len(self.buffer)))
+            target = sum(self.buffer[j][4]*(self.gamma ** (j - i)) for j in range(i, len(self.buffer)))
             obs.append(self.buffer[i][0])
             actions.append(self.buffer[i][2])
             masks.append(self.buffer[i][3])
@@ -500,22 +678,24 @@ class ExperienceBuffer:
         
         self.buffer = []
 
-        return obs, actions, masks, bootstrapped_targets
+        return obs, actions, masks, bootstrapped_targets, next_states
 
 if __name__ == "__main__":
     env = Choko_Env()
-    ppo_agent = PPOAgent(env.action_space.n, hidden_dim = 64)
-    ppo_agent.switch_to_cpu()
-    buffer = ReplayBuffer(0.99, 0.95, ppo_agent=ppo_agent, max_size = 5000)
-    dataloader = buffer.make_dataloader(batch_size = 64, shuffle = True, num_workers = 0)
+    qAgent = QAgent()
+    qAgent.switch_to_cpu()
+    buffer = ReplayBufferQLearning(gamma = 0.99, critic = qAgent, td_gap = 5, max_size=4096)
+    dataloader = buffer.make_dataloader(
+        batch_size = 64,
+        shuffle = True,
+        num_workers = 2
+    )
+
     for batch in dataloader:
-        obs, actions, masks, logps, advantages, returns = batch
-        print(obs.shape)
-        print(actions.shape)
-        print(masks.shape)
-        print(logps.shape)
-        print(advantages.shape)
-        print(returns.shape)
-        break
+        obs, actions, masks, targets, next_states, done = batch
+        print("\n")
+        print(next_states.shape)
+        print(done.shape)
+
 
 
