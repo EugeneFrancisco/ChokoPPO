@@ -356,7 +356,42 @@ class ReplayBufferQLearning:
             self.head = (self.head + num_to_remove) % self.max_size
 
             
-    
+    def get_one_batch(self, batch_size = 64):
+        '''
+        Returns one batch of shuffled data from the replay buffer. The data is
+        returned as a tuple of (observations, actions, masks, targets, next_states, done)
+        where:
+            observations: [batch_size, 25] a numpy array of observations
+            actions: [batch_size] a numpy array of actions
+            masks: [batch_size, 2625] a numpy array of masks for which actions are valid at the state
+            targets: [batch_size] a numpy array of bootstrap targets
+            next_states: [batch_size, 25] a numpy array of the last states associated with the targets for computation
+            of the bootstrap target Q value.
+            done: [batch_size] a numpy array of booleans indicating whether the episode is done at that state.
+        '''
+        random_idxs = np.random.choice(self.max_size, batch_size, replace=False)
+        obs = self.dataset_obs[random_idxs]
+        actions = self.actions[random_idxs]
+        masks = self.masks[random_idxs]
+        targets = self.targets[random_idxs]
+        next_states = self.next_states[random_idxs]
+        done = self.done[random_idxs]
+
+        torch_obs = torch.from_numpy(obs)
+        torch_actions = torch.from_numpy(actions)
+        torch_masks = torch.from_numpy(masks)
+        torch_targets = torch.from_numpy(targets).float()
+        torch_next_states = torch.from_numpy(next_states)
+        torch_done = torch.from_numpy(done)
+        return (
+            torch_obs,
+            torch_actions,
+            torch_masks,
+            torch_targets,
+            torch_next_states,
+            torch_done
+        )
+
     
     def make_dataloader(self, batch_size = 64, shuffle = True, num_workers = 0) -> DataLoader:
 
@@ -608,7 +643,7 @@ class ReplayBufferQLearning:
         all_next_states.extend(player_2_next_states)
         all_done.extend(player_2_done)
 
-        return all_obs, all_actions, all_masks, all_bootstrap_targets, all_done
+        return all_obs, all_actions, all_masks, all_bootstrap_targets, all_next_states, all_done
                 
 
 
@@ -643,7 +678,7 @@ class ExperienceBuffer:
             last_experience = self.buffer[-1]
             last_state_numpy, _, _, last_mask, _ = last_experience
             first_state, _, first_action, _, _ = self.buffer.pop(0)
-            return (first_state, first_action, last_mask, bootstrapped_target, last_mask)
+            return (first_state, first_action, last_mask, bootstrapped_target, last_state_numpy)
         
         return None
     

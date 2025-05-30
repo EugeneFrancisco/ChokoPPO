@@ -162,7 +162,7 @@ def run_ppo_training_loop():
     writer.close()
 
 def run_q_leaning_training_loop():
-    run_num = "run_1"
+    run_num = "run_2"
     writer = SummaryWriter(log_dir = f"logs/q_learning/{run_num}")
     global_step = 0
 
@@ -185,7 +185,6 @@ def run_q_leaning_training_loop():
     )
     buffer.make_dataset()
     batch_size = config.BATCH_SIZE
-    dataloader = buffer.make_dataloader(batch_size = batch_size, shuffle = True, num_workers = 2)
     
     pbar = tqdm.tqdm(total=config.NUM_Q_LEARNING_ITERATIONS, desc="Training Q-Learning Agent")
     
@@ -193,45 +192,45 @@ def run_q_leaning_training_loop():
         # training the Q agent first
         q_agent.train()
         q_agent.switch_to_device()
-        loader_iter = iter(dataloader)
 
         if i % config.TARGET_UPDATE_FREQ == 0:
             q_agent_target.load_state_dict(q_agent.state_dict())
 
         total_loss = 0.0
-        for _ in range(config.NUM_GRADIENT_STEPS_PER_UPDATE):
-            batch = next(loader_iter)
-            obs, actions, masks, targets, next_states, done = batch
-            obs = obs.to(q_agent.device)
-            actions = actions.to(q_agent.device)
-            masks = masks.to(q_agent.device)
-            targets = targets.to(q_agent.device)
-            next_states = next_states.to(q_agent.device)
-            done = done.to(q_agent.device)
 
-            all_q_values = q_agent(obs)
-            q_values = all_q_values[torch.arange(0, batch_size), actions]
-            with torch.no_grad():
-                online_q_values = q_agent(next_states)
-                float_mask = (~masks).bool()
-                online_q_values_masked = online_q_values.masked_fill(float_mask, config.NEG_INF)
-                next_actions = torch.argmax(online_q_values_masked, dim=1)
+        batch = buffer.get_one_batch(batch_size)
+        
+        obs, actions, masks, targets, next_states, done = batch
+        obs = obs.to(q_agent.device)
+        actions = actions.to(q_agent.device)
+        masks = masks.to(q_agent.device)
+        targets = targets.to(q_agent.device)
+        next_states = next_states.to(q_agent.device)
+        done = done.to(q_agent.device)
 
-                bootstrap_q_values_all = q_agent_target(next_states)
-                bootstrap_q_values = bootstrap_q_values_all[torch.arange(0, batch_size), next_actions]
+        all_q_values = q_agent(obs)
+        q_values = all_q_values[torch.arange(0, batch_size), actions]
+        with torch.no_grad():
+            online_q_values = q_agent(next_states)
+            float_mask = (~masks).bool()
+            online_q_values_masked = online_q_values.masked_fill(float_mask, config.NEG_INF)
+            next_actions = torch.argmax(online_q_values_masked, dim=1)
 
-            bootstrap_q_values = (config.GAMMA ** config.TD_GAP) * bootstrap_q_values * (1 - done.float())
-            targets = targets + bootstrap_q_values
-            
-            assert targets.shape == q_values.shape
+            bootstrap_q_values_all = q_agent_target(next_states)
+            bootstrap_q_values = bootstrap_q_values_all[torch.arange(0, batch_size), next_actions]
 
-            loss = smooth_l1_loss(q_values, targets)
-            total_loss += loss.item()
+        bootstrap_q_values = (config.GAMMA ** config.TD_GAP) * bootstrap_q_values * (1 - done.float())
+        targets = targets + bootstrap_q_values
+        
+        assert targets.shape == q_values.shape
 
-            q_agent.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(q_agent.parameters(), max_norm=5)
-            q_agent.optimizer.step()
+        loss = smooth_l1_loss(q_values, targets)
+        total_loss += loss.item()
+
+        q_agent.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(q_agent.parameters(), max_norm=5)
+        q_agent.optimizer.step()
         
         
         # now need to add the new transitions to the replay buffer
@@ -240,7 +239,6 @@ def run_q_leaning_training_loop():
         buffer.refresh(q_agent)
         with torch.no_grad():
             buffer.add_episode()
-        dataloader = buffer.make_dataloader(batch_size = batch_size, shuffle = True, num_workers = 2)
 
         
         # logging
