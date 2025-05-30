@@ -377,11 +377,11 @@ class ReplayBufferQLearning:
         next_states = self.next_states[random_idxs]
         done = self.done[random_idxs]
 
-        torch_obs = torch.from_numpy(obs)
+        torch_obs = torch.from_numpy(obs).float()
         torch_actions = torch.from_numpy(actions)
         torch_masks = torch.from_numpy(masks)
         torch_targets = torch.from_numpy(targets).float()
-        torch_next_states = torch.from_numpy(next_states)
+        torch_next_states = torch.from_numpy(next_states).float()
         torch_done = torch.from_numpy(done)
         return (
             torch_obs,
