@@ -162,11 +162,10 @@ def run_ppo_training_loop():
     writer.close()
 
 def run_q_leaning_training_loop():
-    run_num = "run_2"
+    run_num = "run_3"
     writer = SummaryWriter(log_dir = f"logs/q_learning/{run_num}")
     global_step = 0
 
-    # TODO frozen agent for evaluation
     q_agent = QAgent(hidden_dim=config.HIDDEN_DIM)
     q_agent_target = QAgent(hidden_dim=config.HIDDEN_DIM)
     q_agent_frozen = QAgent(hidden_dim=config.HIDDEN_DIM)
@@ -199,7 +198,7 @@ def run_q_leaning_training_loop():
         total_loss = 0.0
 
         batch = buffer.get_one_batch(batch_size)
-        
+
         obs, actions, masks, targets, next_states, done = batch
         obs = obs.to(q_agent.device)
         actions = actions.to(q_agent.device)
@@ -274,7 +273,9 @@ def run_q_leaning_training_loop():
             writer.add_scalar("Eval/win_rate", win_rate, global_step)
             writer.add_scalar("Eval/draw_rate", draw_rate, global_step)
             writer.add_scalar("Eval/loss_rate", loss_rate, global_step)
-            # q_agent_frozen.load_state_dict(q_agent.state_dict())
+        
+        if (i % config.FROZEN_UPDATE_FREQ == 0):
+            q_agent_frozen.load_state_dict(q_agent.state_dict())
 
         if (i % 1000 == 0):
             save_path = os.path.join(f"checkpoints/q_learning/{run_num}", f"q_agent_{i}.pth")
