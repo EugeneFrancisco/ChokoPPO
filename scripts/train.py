@@ -16,7 +16,7 @@ import argparse
 
 
 def run_ppo_training_loop():
-    writer = SummaryWriter(log_dir = "logs/ppo/run_9")
+    writer = SummaryWriter(log_dir = "logs/ppo/run_10")
     global_step = 0
 
     ppo_agent = PPOAgent(num_actions = config.NUM_ACTIONS, hidden_dim = config.HIDDEN_DIM)
@@ -109,6 +109,7 @@ def run_ppo_training_loop():
         
         pbar.close()
         
+        # evaluation against frozen ancestor
         if (i % 10 == 0):
             
             # evaluate the agent against the frozen agent:
@@ -143,14 +144,19 @@ def run_ppo_training_loop():
             ppo_agent.train()
             ppo_agent.switch_to_device()
 
-        if (i % 100 == 0):
-            save_path = os.path.join("checkpoints", f"ppo_agent_{i}.pth")
+        # saving the model every 250 iterations
+        if (i % 250 == 0):
+            save_path = os.path.join("checkpoints/ppo/run_10", f"ppo_agent_{i}.pth")
             torch.save({
                 "model_state_dict": ppo_agent.state_dict(),
                 "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
                 "loss": loss.item()
             }, save_path)
             print(f"Iteration {i + 1}/{config.NUM_ITERATIONS} completed. Model saved to {save_path}")
+        
+        # adding frozen versions to the buffer
+        if ( i % int(config.NUM_ITERATIONS / config.NUM_FROZEN_AGENTS) == 0):
+            buffer.add_frozen_agent(ppo_agent)
     
     save_path = os.path.join("checkpoints", f"ppo_agent_final.pth")
     torch.save({

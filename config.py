@@ -2,15 +2,16 @@
 
 # training loop hyperparameters
 BATCH_SIZE     = 128
-ROLLOUT_LENGTH = 4096
+ROLLOUT_LENGTH = 8192  
 HIDDEN_DIM     = 64
-NUM_EPOCHS     = 6
-NUM_ITERATIONS = 5000
+NUM_EPOCHS     = 12 
+NUM_ITERATIONS = 8000
 LEARNING_RATE = 1e-4
 
 # replay buffer hyperparameters
-MAX_BUFFER_SIZE = 4096
+MAX_BUFFER_SIZE = 8192
 NUM_TASKS = 2
+NUM_FROZEN_AGENTS = 20
 
 # environment / action settings
 NUM_ACTIONS = (25) + (25 * 4) + (25 * 4 * 25)  # 2625 possible actions

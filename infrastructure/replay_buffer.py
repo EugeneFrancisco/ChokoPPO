@@ -2,6 +2,7 @@ from envs.choko_env import Choko_Env
 from agents.random_agent import RandomAgent
 from agents.ppo_agent import PPOAgent
 from agents.q_agent import QAgent
+from agents.minimax_agent import MinimaxAgent
 from torch.utils.data import Dataset, DataLoader
 from . import utils
 import numpy as np
@@ -9,6 +10,8 @@ import torch
 import torch.nn as nn
 import tqdm
 import config
+import copy
+import random
 
 
 class RLDataset(Dataset):
@@ -21,6 +24,7 @@ class RLDataset(Dataset):
         self.advantages = torch.from_numpy(advantages).float()
         self.logps = torch.from_numpy(logps).float()
         self.returns = torch.from_numpy(returns).float()
+
 
     
     def __len__(self):
@@ -45,6 +49,22 @@ class ReplayBuffer:
         self.ppo_agent = ppo_agent
         self.agent = self.ppo_agent.act
         self.critic = self.ppo_agent.critic
+
+        self.frozen_agents = [] # list of frozen agents so that actor plays against lots of older generations
+
+        self.minimax_agent = MinimaxAgent(max_depth = 3)
+    
+    def add_frozen_agent(self, ppo_agent):
+        if len(self.frozen_agents) >= config.NUM_FROZEN_AGENTS:
+            self.frozen_agents.pop(0)  # remove the oldest frozen agent if we have too many
+        
+        frozen = copy.deepcopy(ppo_agent)
+        frozen.switch_to_cpu()  # make sure the frozen agent is on CPU for inference
+        frozen.eval()
+        for p in frozen.parameters():
+            p.requires_grad_(False)
+
+        self.frozen_agents.append(frozen)
     
     def refresh(self, ppo_agent):
         '''
@@ -104,7 +124,17 @@ class ReplayBuffer:
 
         while len(dataset_obs) < self.max_size:
 
-            rollout_obs, rollout_actions, rollout_masks, rollout_logps, rollout_advantages, rollout_returns = self.run_one_episode()
+            if len(self.frozen_agents) == 0:
+                rollout_info = self.run_one_episode()
+            else:
+                opponent_choice = random.randint(0, len(self.frozen_agents) - 1)
+                if opponent_choice == len(self.frozen_agents) - 1:
+                    rollout_info = self.run_one_episode()
+                else:
+                    # play against a frozen agent
+                    rollout_info = self.run_one_episode_frozen(self.frozen_agents[opponent_choice])
+
+            rollout_obs, rollout_actions, rollout_masks, rollout_logps, rollout_advantages, rollout_returns = rollout_info
 
             dataset_obs.extend(rollout_obs)
             actions.extend(rollout_actions)
@@ -264,7 +294,173 @@ class ReplayBuffer:
             all_returns.extend(player_2_returns)
             
             return all_obs, all_actions, all_masks, all_logps, all_advantages, all_returns
+    
+    def run_one_episode_frozen(self, other_ppo):
+        '''
+        Same as run_one_episode except the game is between the current agent in self.agent and
+        the other_ppo agent here
+        '''
+        all_obs = []
+        all_actions = []
+        all_masks = []
+        all_logps = []
+        all_advantages = []
+        all_returns = []
+
+        all_rewards = []
+
+        env = Choko_Env()
+
+        raw_obs, mask = env.reset()
+        opponent_start = True
+
+        with torch.no_grad():
+            while True:
+                if opponent_start == False or opponent_start is None:
+                    # opponent's turn
+                    if env.player == 1:
+                        obs = raw_obs
+                        obs_torch = torch.from_numpy(raw_obs).float().unsqueeze(0)
+                    else:
+                        obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+                        obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
+                    torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
+                    with torch.no_grad():
+                        dist = other_ppo.act(obs_torch, torch_mask)
+                    action = dist.sample()
+
+                    state, reward, done, _ = env.step(action.item())
+                    raw_obs, mask = state
+                    if done != "ongoing":
+                        if done == "won":
+                            # opponent won
+                            all_rewards[-1] = -2
+                    break
+                    
+                # now it's our turn
+                if env.player == 1:
+                    obs = raw_obs
+                    obs_torch = torch.from_numpy(raw_obs).float().unsqueeze(0)
+                else:
+                    obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+                    obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
+                
+                all_obs.append(obs)
+                torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
+                dist = self.agent(obs_torch, torch_mask)
+                action = dist.sample()
+                logp = dist.log_prob(action)
+                logp_value = logp.item()
+                
+                all_actions.append(action.item())
+                all_logps.append(logp_value)
+                all_masks.append(mask)
+
+                state, reward, done, _ = env.step(action.item())
+                raw_obs, mask = state
+
+                all_rewards.append(reward)
+
+                if done != "ongoing":
+                    break
+                opponent_start = None  
+
+            all_obs_np = np.stack(all_obs, axis = 0)
+            all_values_tensor = self.critic(torch.as_tensor(all_obs_np).float())
+            all_values = all_values_tensor.tolist()
+            all_values.append(0)  # add the last value to the trajectory
+
+            all_returns, all_advantages = utils.compute_gae_and_returns(
+                all_rewards,
+                all_values,
+                self.gamma,
+                self.lam
+            )
+
+            return all_obs, all_actions, all_masks, all_logps, all_advantages, all_returns
+
+            
+    
+    def run_one_episode_minimax(self, minimax_start = True):
+        all_obs = []
+        all_actions = []
+        all_masks = []
+        all_logps = []
+        all_advantages = []
+        all_returns = []
+
+        all_rewards = []
+
+        env = Choko_Env()
+
+        while True:
+            # minimax turn
+            if minimax_start is None or minimax_start != True:
+                action = self.minimax_agent.choose_action(env)
+                print("minimax acted")
+                state, reward, done, _ = env.step(action)
+                raw_obs, mask = state
+                if done != "ongoing":
+                    if done == "won":
+                        print("loss")
+                        # the ppo_agent lost
+                        all_rewards[-1] = -2
+                    else:
+                        print("draw")
+                    break
+            
+            # ppo agent turn
+            if env.player == 1:
+                obs = raw_obs
+                obs_torch = torch.from_numpy(raw_obs).float().unsqueeze(0)
+            else:
+                obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+                obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
+            all_obs.append(obs)
+            
+            torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
+            with torch.no_grad():
+                dist = self.agent(obs_torch, torch_mask)
+                print("ppo agent acted")
+            action = dist.sample()
+
+            logp = dist.log_prob(action)
+            logp_value = logp.item()
+
+            all_actions.append(action.item())
+            all_logps.append(logp_value)
+            all_masks.append(mask)
+
+            state, reward, done, _ = env.step(action.item())
+            raw_obs, mask = state
+
+            all_rewards.append(reward)
+
+            if done != "ongoing":
+                if done == "won":
+                    print("win")
+                else:
+                    print("draw")
+                break
+
+            minimax_start = None
         
+        all_obs_np = np.stack(all_obs, axis = 0)
+        all_values_tensor = self.critic(torch.as_tensor(all_obs_np).float())
+        all_values = all_values_tensor.tolist()
+        all_values.append(0)  # add the last value to the trajectory
+
+        all_returns, all_advantages = utils.compute_gae_and_returns(
+            all_rewards,
+            all_values,
+            self.gamma,
+            self.lam
+        )
+
+        return all_obs, all_actions, all_masks, all_logps, all_advantages, all_returns
+        
+
+
 class RLDatasetQLearning(Dataset):
     def __init__(self, obs, actions, masks, targets, next_states, done):
         self.obs = torch.from_numpy(obs).float()
@@ -717,20 +913,33 @@ class ExperienceBuffer:
 
 if __name__ == "__main__":
     env = Choko_Env()
-    qAgent = QAgent()
-    qAgent.switch_to_cpu()
-    buffer = ReplayBufferQLearning(gamma = 0.99, critic = qAgent, td_gap = 5, max_size=4096)
-    dataloader = buffer.make_dataloader(
-        batch_size = 64,
-        shuffle = True,
-        num_workers = 2
+    ppo_agent = PPOAgent(num_actions = config.NUM_ACTIONS, hidden_dim = config.HIDDEN_DIM)
+    ppo_agent.switch_to_cpu()
+    checkpoint = torch.load(
+        "checkpoints/ppo/run_8_finished/ppo_agent_final.pth",
+        map_location=ppo_agent.device,         # ensures weights land on the right device
+        weights_only=True                  # suppresses the FutureWarning by only loading tensors
     )
+    ppo_agent.load_state_dict(checkpoint["model_state_dict"])
+    ppo_agent.eval()
+    buffer = ReplayBuffer(
+        gamma = config.GAMMA,
+        lam = config.LAM,
+        ppo_agent = ppo_agent,
+    )
+    buffer.run_one_episode_minimax(minimax_start = False)
+    
+    # dataloader = buffer.make_dataloader(
+    #     batch_size = 64,
+    #     shuffle = True,
+    #     num_workers = 2
+    # )
 
-    for batch in dataloader:
-        obs, actions, masks, targets, next_states, done = batch
-        print("\n")
-        print(next_states.shape)
-        print(done.shape)
+    # for batch in dataloader:
+    #     obs, actions, masks, targets, next_states, done = batch
+    #     print("\n")
+    #     print(next_states.shape)
+    #     print(done.shape)
 
 
 

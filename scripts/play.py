@@ -75,14 +75,14 @@ def user_v_minimax(minimax_agent):
     agent = minimax_agent
     raw_obs, mask = env.reset()
 
-    turn = "minimax"
+    turn = "user"
     
     while True:
         # agent's turn
         if turn is None or turn != "user":
             action = agent.choose_action(env)
             _, _, done, _ = env.step(action)
-            print("Minimax agent has moved, the board looks like this:\n")
+            print("Minimax agent has acted, the board looks like this:\n")
             env.render()
             print("\n")
             
@@ -146,19 +146,17 @@ def agent_v_agent(ppo_agent_1, ppo_agent_2):
     
 
 if __name__ == "__main__":
-    # agent_new = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
-    # agent_new.switch_to_cpu()
-    # checkpoint = torch.load(
-    #     "checkpoints/ppo/run_9_finished/ppo_agent_final.pth",
-    #     map_location=agent_new.device,         # ensures weights land on the right device
-    #     weights_only=True                  # suppresses the FutureWarning by only loading tensors
-    # )
-    # agent_new.load_state_dict(checkpoint["model_state_dict"])
-    # agent_new.eval()
+    agent_new = PPOAgent(num_actions = NUM_ACTIONS, hidden_dim = HIDDEN_DIM)
+    agent_new.switch_to_cpu()
+    checkpoint = torch.load(
+        "checkpoints/ppo/run_10/ppo_agent_2750.pth",
+        map_location=agent_new.device,         # ensures weights land on the right device
+        weights_only=True                  # suppresses the FutureWarning by only loading tensors
+    )
+    agent_new.load_state_dict(checkpoint["model_state_dict"])
+    agent_new.eval()
 
-    agent_new = MinimaxAgent(max_depth = 3)
-
-    user_v_minimax(agent_new)
+    user_v_agent(agent_new)
 
 
 
