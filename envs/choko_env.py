@@ -7,9 +7,10 @@ NUM_PIECES_PER_PLAYER = 12
 MAX_GAME_LENGTH = 200
 
 class Choko_Env:
-    def __init__(self):
+    def __init__(self, capture_reward = 0.1):
         self.obs_space = spaces.Box(low = 0, high = 2, shape = (BOARD_DIM, BOARD_DIM), dtype = np.int8)
         self.action_space = spaces.Discrete(NUM_ACTIONS)
+        self.capture_reward = capture_reward
         self.reset()
     
     def reset(self):
@@ -89,7 +90,7 @@ class Choko_Env:
             # first capture:
             self.board[between_row, between_col] = 0
             self.pieces_captured[3 - self.player] += 1
-            reward += 0.1
+            reward += self.capture_reward
 
             # extra capture
             if self.board[capture_row, capture_col] == self.player:
@@ -99,7 +100,7 @@ class Choko_Env:
                 # we are capturing an opponent's piece
                 self.board[capture_row, capture_col] = 0
                 self.pieces_captured[3 - self.player] += 1
-                reward += 0.1
+                reward += self.capture_reward
         
         done: str = self.evaluate_termination()
     
@@ -148,7 +149,9 @@ class Choko_Env:
         For captures, it will be helpful to have an array of all
         opponents pieces. 
         '''
-        obs = self.board.flatten()
+        obs = np.empty(26, dtype = self.board.dtype) 
+        obs[:25] = self.board.ravel()
+        obs[25] = self.drop_initiative if self.drop_initiative is not None else 0
         # get a list of the indices of all the opponent's pieces on the board
         opp_caps = self.get_opponent_pieces()
 

@@ -1,10 +1,10 @@
 # config.py
 
 # training loop hyperparameters
-BATCH_SIZE     = 128
+BATCH_SIZE     = 64
 ROLLOUT_LENGTH = 8192  
 HIDDEN_DIM     = 64
-NUM_EPOCHS     = 12 
+NUM_EPOCHS     = 6 
 NUM_ITERATIONS = 8000
 LEARNING_RATE = 1e-4
 

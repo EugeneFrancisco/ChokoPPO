@@ -24,11 +24,12 @@ def run_ppo_training_loop():
     ppo_agent_frozen.load_state_dict(ppo_agent.state_dict())
     ppo_agent_frozen.eval()
     ppo_agent_frozen.switch_to_cpu()
-    buffer = ReplayBuffer(gamma = config.GAMMA, lam = config.LAM, ppo_agent = ppo_agent, max_size = config.ROLLOUT_LENGTH)
+    buffer = ReplayBuffer(gamma = config.GAMMA, lam = config.LAM, ppo_agent = ppo_agent, capture_reward = 0.1, max_size = config.ROLLOUT_LENGTH)
     for i in range(config.NUM_ITERATIONS):
+        capture_reward = max(0, 0.1 - 0.1 * 2 * (i / config.NUM_ITERATIONS))  # decay reward for exploration
         ppo_agent.eval()
         ppo_agent.switch_to_cpu()
-        buffer.refresh(ppo_agent) 
+        buffer.refresh(ppo_agent, capture_reward = capture_reward) 
         dataloader = buffer.make_dataloader(
             batch_size = config.BATCH_SIZE, 
             shuffle = True, 

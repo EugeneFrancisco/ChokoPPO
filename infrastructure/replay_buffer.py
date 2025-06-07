@@ -42,13 +42,14 @@ class RLDataset(Dataset):
 
 class ReplayBuffer:
     # Too lazy to change names but this is the ReplayBuffer for the PPO agent, NOT the Q learner.
-    def __init__(self, gamma, lam, ppo_agent, max_size = config.MAX_BUFFER_SIZE):
+    def __init__(self, gamma, lam, ppo_agent, capture_reward, max_size = config.MAX_BUFFER_SIZE):
         self.gamma = gamma
         self.lam = lam
         self.max_size = max_size
         self.ppo_agent = ppo_agent
         self.agent = self.ppo_agent.act
         self.critic = self.ppo_agent.critic
+        self.capture_reward = capture_reward
 
         self.frozen_agents = [] # list of frozen agents so that actor plays against lots of older generations
 
@@ -66,7 +67,7 @@ class ReplayBuffer:
 
         self.frozen_agents.append(frozen)
     
-    def refresh(self, ppo_agent):
+    def refresh(self, ppo_agent, capture_reward):
         '''
         Refreshes the agent and the critic in the buffer.
         This is useful when the agent is updated and we want to use the new agent for collecting rollouts.
@@ -74,6 +75,7 @@ class ReplayBuffer:
         self.ppo_agent = ppo_agent
         self.agent = self.ppo_agent.act
         self.critic = self.ppo_agent.critic
+        self.capture_reward = capture_reward
     
     def make_dataloader(self, batch_size = 64, shuffle = True, num_workers = 0) -> DataLoader:
         '''
@@ -191,7 +193,7 @@ class ReplayBuffer:
         player_2_logps = []
         player_2_rewards = []
 
-        env = Choko_Env()
+        env = Choko_Env(self.capture_reward)
         raw_obs, mask = env.reset()
         with torch.no_grad():
             while True:
@@ -309,10 +311,13 @@ class ReplayBuffer:
 
         all_rewards = []
 
-        env = Choko_Env()
+        env = Choko_Env(self.capture_reward)
 
         raw_obs, mask = env.reset()
-        opponent_start = True
+        if random.random() < 0.5:
+            opponent_start = False  # we start first
+        else:
+            opponent_start = True
 
         with torch.no_grad():
             while True:

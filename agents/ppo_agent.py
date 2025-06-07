@@ -12,7 +12,9 @@ class PPOAgent(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_actions = num_actions
         self.trunk = nn.Sequential(
-            nn.Linear(25, self.hidden_dim),
+            nn.Linear(26, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU()
