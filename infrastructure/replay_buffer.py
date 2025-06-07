@@ -134,6 +134,7 @@ class ReplayBuffer:
                     rollout_info = self.run_one_episode()
                 else:
                     # play against a frozen agent
+                    print("\n\nAHHHHHHHHH\n\n")
                     rollout_info = self.run_one_episode_frozen(self.frozen_agents[opponent_choice])
 
             rollout_obs, rollout_actions, rollout_masks, rollout_logps, rollout_advantages, rollout_returns = rollout_info
@@ -314,14 +315,11 @@ class ReplayBuffer:
         env = Choko_Env(self.capture_reward)
 
         raw_obs, mask = env.reset()
-        if random.random() < 0.5:
-            opponent_start = False  # we start first
-        else:
-            opponent_start = True
+        opponent_turn = random.random() < 0.5
 
         with torch.no_grad():
             while True:
-                if opponent_start == False or opponent_start is None:
+                if opponent_turn:
                     # opponent's turn
                     if env.player == 1:
                         obs = raw_obs
@@ -340,7 +338,7 @@ class ReplayBuffer:
                         if done == "won":
                             # opponent won
                             all_rewards[-1] = -2
-                    break
+                        break
                     
                 # now it's our turn
                 if env.player == 1:
@@ -368,7 +366,7 @@ class ReplayBuffer:
 
                 if done != "ongoing":
                     break
-                opponent_start = None  
+                opponent_turn = True
 
             all_obs_np = np.stack(all_obs, axis = 0)
             all_values_tensor = self.critic(torch.as_tensor(all_obs_np).float())

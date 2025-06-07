@@ -16,7 +16,7 @@ import argparse
 
 
 def run_ppo_training_loop():
-    writer = SummaryWriter(log_dir = "logs/ppo/run_10")
+    writer = SummaryWriter(log_dir = "logs/ppo/run_11")
     global_step = 0
 
     ppo_agent = PPOAgent(num_actions = config.NUM_ACTIONS, hidden_dim = config.HIDDEN_DIM)
@@ -26,7 +26,7 @@ def run_ppo_training_loop():
     ppo_agent_frozen.switch_to_cpu()
     buffer = ReplayBuffer(gamma = config.GAMMA, lam = config.LAM, ppo_agent = ppo_agent, capture_reward = 0.1, max_size = config.ROLLOUT_LENGTH)
     for i in range(config.NUM_ITERATIONS):
-        capture_reward = max(0, 0.1 - 0.1 * 2 * (i / config.NUM_ITERATIONS))  # decay reward for exploration
+        capture_reward = max(0, 0.1 - 0.1 * 4 * (i / config.NUM_ITERATIONS))  # decay reward for exploration
         ppo_agent.eval()
         ppo_agent.switch_to_cpu()
         buffer.refresh(ppo_agent, capture_reward = capture_reward) 
@@ -138,8 +138,10 @@ def run_ppo_training_loop():
                     total_draws += 1
             win_rate = total_wins / (total_wins + total_losses + total_draws)
             draw_rate = total_draws / (total_wins + total_losses + total_draws)
+            loss_rate = total_losses / (total_wins + total_losses + total_draws)
             writer.add_scalar("Eval/win_rate", win_rate, global_step)
             writer.add_scalar("Eval/draw_rate", draw_rate, global_step)
+            writer.add_scalar("Eval/loss_rate", loss_rate, global_step)
 
             ppo_agent_frozen.load_state_dict(ppo_agent.state_dict())
             ppo_agent.train()
@@ -147,7 +149,7 @@ def run_ppo_training_loop():
 
         # saving the model every 250 iterations
         if (i % 250 == 0):
-            save_path = os.path.join("checkpoints/ppo/run_10", f"ppo_agent_{i}.pth")
+            save_path = os.path.join("checkpoints/ppo/run_11", f"ppo_agent_{i}.pth")
             torch.save({
                 "model_state_dict": ppo_agent.state_dict(),
                 "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
@@ -159,7 +161,7 @@ def run_ppo_training_loop():
         if ( i % int(config.NUM_ITERATIONS / config.NUM_FROZEN_AGENTS) == 0):
             buffer.add_frozen_agent(ppo_agent)
     
-    save_path = os.path.join("checkpoints", f"ppo_agent_final.pth")
+    save_path = os.path.join("checkpoints/ppo/run_11", f"ppo_agent_final.pth")
     torch.save({
         "model_state_dict": ppo_agent.state_dict(),
         "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
