@@ -16,7 +16,7 @@ import argparse
 
 
 def run_ppo_training_loop():
-    writer = SummaryWriter(log_dir = "logs/ppo/run_11")
+    writer = SummaryWriter(log_dir = "logs/ppo/run_13")
     global_step = 0
 
     ppo_agent = PPOAgent(num_actions = config.NUM_ACTIONS, hidden_dim = config.HIDDEN_DIM)
@@ -149,7 +149,7 @@ def run_ppo_training_loop():
 
         # saving the model every 250 iterations
         if (i % 250 == 0):
-            save_path = os.path.join("checkpoints/ppo/run_11", f"ppo_agent_{i}.pth")
+            save_path = os.path.join("checkpoints/ppo/run_13", f"ppo_agent_{i}.pth")
             torch.save({
                 "model_state_dict": ppo_agent.state_dict(),
                 "optimizer_state_dict": ppo_agent.optimizer.state_dict(),
@@ -161,7 +161,7 @@ def run_ppo_training_loop():
         if ( i % int(config.NUM_ITERATIONS / config.NUM_FROZEN_AGENTS) == 0):
             buffer.add_frozen_agent(ppo_agent)
     
-    save_path = os.path.join("checkpoints/ppo/run_11", f"ppo_agent_final.pth")
+    save_path = os.path.join("checkpoints/ppo/run_13", f"ppo_agent_final.pth")
     torch.save({
         "model_state_dict": ppo_agent.state_dict(),
         "optimizer_state_dict": ppo_agent.optimizer.state_dict(),

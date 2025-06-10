@@ -106,3 +106,21 @@ def parse_inputs(inputs: list[str], env: Choko_Env) -> int:
         return -1
     except:
         return -1
+
+def _flip_obs(obs: np.ndarray, extended = True) -> np.ndarray:
+    """Flip the piece IDs so that the PPOAgent can always imagine it is Player 1.
+
+    Only the piece/channel identities are swapped; the board coordinates remain
+    unchanged because the action encoding is absolute (row‑major indices).
+    """
+    obs = obs.copy()
+    board = obs[:25]
+    # swap 1<->2 (0 stays 0)
+    board = np.where(board == 0, 0, 3 - board)
+    obs[:25] = board
+    if extended:
+        # drop‑initiative lives in obs[25]; 0 means none, 1 or 2 means which player.
+        if obs[25] != 0:
+            obs[25] = 3 - obs[25]
+
+    return obs

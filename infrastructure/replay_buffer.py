@@ -4,6 +4,7 @@ from agents.ppo_agent import PPOAgent
 from agents.q_agent import QAgent
 from agents.minimax_agent import MinimaxAgent
 from torch.utils.data import Dataset, DataLoader
+from infrastructure.utils import _flip_obs
 from . import utils
 import numpy as np
 import torch
@@ -134,7 +135,6 @@ class ReplayBuffer:
                     rollout_info = self.run_one_episode()
                 else:
                     # play against a frozen agent
-                    print("\n\nAHHHHHHHHH\n\n")
                     rollout_info = self.run_one_episode_frozen(self.frozen_agents[opponent_choice])
 
             rollout_obs, rollout_actions, rollout_masks, rollout_logps, rollout_advantages, rollout_returns = rollout_info
@@ -204,7 +204,7 @@ class ReplayBuffer:
                     obs_torch = torch.from_numpy(raw_obs).float().unsqueeze(0)
                     player_1_states.append(obs)
                 else:
-                    obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+                    obs = _flip_obs(raw_obs)
                     obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
                     player_2_states.append(obs)
                 # (2) get the action and add the action
@@ -325,7 +325,7 @@ class ReplayBuffer:
                         obs = raw_obs
                         obs_torch = torch.from_numpy(raw_obs).float().unsqueeze(0)
                     else:
-                        obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+                        obs = _flip_obs(raw_obs)
                         obs_torch = torch.from_numpy(obs).float().unsqueeze(0)
                     torch_mask = torch.from_numpy(mask).float().unsqueeze(0)
                     with torch.no_grad():

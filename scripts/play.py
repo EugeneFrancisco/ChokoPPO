@@ -1,4 +1,5 @@
-from envs.choko_env import Choko_Env
+from envs.choko_env_old import Choko_Env as Choko_Env_Old
+from envs.choko_env import Choko_Env  # New environment for the latest version
 from agents.ppo_agent import PPOAgent, PPOAgentOld
 from agents.q_agent import QAgent
 from agents.minimax_agent import MinimaxAgent
@@ -116,7 +117,7 @@ def user_v_minimax(minimax_agent):
             break
         turn = None
 
-def agent_v_agent(ppo_agent_1, ppo_agent_2):
+def agent_v_agent(ppo_agent_1, ppo_agent_2, shrink_dim_flag = False):
     '''
     Simulates a game between two agents and returns the winner (1 for player 1, 2 for player 2, -1 for draw)
     '''
@@ -136,7 +137,7 @@ def agent_v_agent(ppo_agent_1, ppo_agent_2):
             return 1
 
         # agent 2's turn
-        obs = np.where(raw_obs == 0, 0, 3 - raw_obs)
+        obs = utils._flip_obs(raw_obs)
         obs = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
         torch_mask = torch.from_numpy(mask).unsqueeze(0)
         dist = ppo_agent_2.act(obs, torch_mask)
@@ -149,18 +150,70 @@ def agent_v_agent(ppo_agent_1, ppo_agent_2):
                 return -1
             return 2
 
+def user_v_mcts(mcts):
+    print("Starting game...")
+    print("When prompted for an action, input the action in the following format:\n")
+    print("'action_name, first_row first_col direction capture_row capture_col' (space separated)\n")
+    print("For example, 'move 0 0 right' means moving the piece at (0, 0) to the right.\n")
+    print("The capture_row and capture_col are for capturing a piece.\n")
+    print("Invalid actions will lead to reprompting.\n")
+    env = Choko_Env()
+    raw_obs, mask = env.reset()
+
+    turn = "user"
     
+    while True:
+        # agent's turn
+        if turn is None or turn != "user":
+            action = mcts.select_action(env)
+            if action is None:
+                print("MCTS agent could not find a valid action!")
+                break
+            info_map = env.to_info(action)
+            print("\nAgent's move:")
+            print(info_map["move_type"])
+            print("\n")
+            _, _, done, _ = env.step(action)
+            print("\n")
+            if done != "ongoing":
+                print("Agent wins!")
+                break
+
+
+        # player's turn
+        print("Your turn! The board looks like this (You are O).")
+        print(f"You have {env.pieces_left[env.player]} pieces left.\n")
+        env.render() 
+        print("\n")
+        action_input = input("Input your action in the format printed: ")
+        inputs = action_input.split(" ")
+        action = utils.parse_inputs(inputs, env)
+        while action == -1: 
+            print("Invalid action! Try again.")
+            action_input = input("Your turn! Input your action in the format printed: ")
+            inputs = action_input.split(" ")
+            action = utils.parse_inputs(inputs, env)
+        state, _, done, _ = env.step(action)
+        print("\n")
+        env.render()
+        print("\n")
+        raw_obs, mask = state
+        if done != "ongoing":
+            print("Player wins!")
+            break
+        turn = None
 
 if __name__ == "__main__":
     agent_new = PPOAgentOld(num_actions = config.NUM_ACTIONS,  hidden_dim = HIDDEN_DIM)
     agent_new.switch_to_cpu()
     checkpoint = torch.load(
-        "checkpoints/ppo/run_9_finished/ppo_agent_2500.pth",
+        "checkpoints/ppo/run_10/ppo_agent_3000.pth",
         map_location=agent_new.device,         # ensures weights land on the right device
         weights_only=True                  # suppresses the FutureWarning by only loading tensors
     )
     agent_new.load_state_dict(checkpoint["model_state_dict"])
     agent_new.eval()
+
 
     user_v_agent(agent_new, shrink_dim_flag = True)
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import csv
 
 
 def smooth_ema(values: np.ndarray, smoothing: float) -> np.ndarray:
@@ -73,11 +74,35 @@ def plot_runs(csv_paths, draw_raw, smoothing: float = 0.6, figsize=(8, 4)):
     plt.tight_layout()
     plt.show()
 
+def mean_value_from_csv(path: str) -> float | None:
+    """
+    Reads the CSV file at `path`, expects a header with a 'Value' column,
+    and returns the mean of all entries in that column. Returns None if empty.
+    """
+    total = 0.0
+    count = 0
+
+    with open(path, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        rows = list(reader)
+        num_rows = len(rows)
+        for i, row in enumerate(rows):
+            if i > num_rows/2:
+                try:
+                    total += float(row['Value'])
+                    count += 1
+                except (KeyError, ValueError):
+                    # Skip rows without a valid 'Value'
+                    continue
+
+    return (total / count) if count > 0 else None
+
 
 # ---------- example usage ----------
 if __name__ == "__main__":
     # 1) Single file
-    plot_runs("./plotting/q_learning/run_3/run_3_draw_rate.csv", draw_raw = False, smoothing=0.95)
+    #plot_runs(["./plotting/ppo/run_10/PPO_V2_win_rate.csv"], draw_raw = True, smoothing=0.90)
+    print(plot_runs(["./plotting/ppo/run_13/PPO_V3_win_rate.csv", "./plotting/ppo/run_13/PPO_V3_draw_rate.csv"], draw_raw = True))
 
     # 2) All CSVs in a directory
     # plot_runs("logs/*.csv", smoothing=0.8)

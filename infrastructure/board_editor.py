@@ -223,7 +223,7 @@ def handle_click(row, col):
 
 
 def main():
-    global current_action, narrow_in_progress
+    global current_action, arrow_in_progress
     screen = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
     pygame.display.set_caption("Choko Board Editor")
     clock = pygame.time.Clock()
@@ -249,17 +249,17 @@ def main():
                 cell = pixel_to_cell(x, y)
                 if current_action == "ARROW":
                     if cell:
-                        narrow_in_progress = cell
+                        arrow_in_progress = cell
                 else:
                     handle_click(*cell)
 
             elif event.type == pygame.MOUSEBUTTONUP and current_action == "ARROW":
-                if narrow_in_progress:
-                    cell_from = narrow_in_progress
+                if arrow_in_progress:
+                    cell_from = arrow_in_progress
                     cell_to   = pixel_to_cell(*event.pos)
                     if cell_to and cell_to != cell_from:
                         arrows.append((*cell_from, *cell_to))
-                    narrow_in_progress = None
+                    arrow_in_progress = None
 
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_s:
@@ -273,8 +273,8 @@ def main():
         render_panel(screen)
 
         # Temp arrow preview while dragging
-        if current_action == "ARROW" and narrow_in_progress and pygame.mouse.get_pressed()[0]:
-            x1, y1 = board_to_pixel(*narrow_in_progress)
+        if current_action == "ARROW" and arrow_in_progress and pygame.mouse.get_pressed()[0]:
+            x1, y1 = board_to_pixel(*arrow_in_progress)
             x2, y2 = pygame.mouse.get_pos()
             draw_arrow(screen, x1, y1, x2, y2)
 
